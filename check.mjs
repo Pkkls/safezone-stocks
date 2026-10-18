@@ -2,7 +2,7 @@
 // refuse to adopt params that do not clearly beat the current ones. node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop } from './backtest.mjs';
+import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamText } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 const ref = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -146,5 +146,20 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.deepStrictEqual(stuck(t + 6 * m, t, t + 5 * m, 0), { stale: false, lost: false }, 'control: a block is not a hang');
   assert.deepStrictEqual(stuck(t + 4 * m, t + 4 * m, 0, t), { stale: false, lost: true }, 'lost session not detected');
   assert.deepStrictEqual(stuck(t + 2 * m, t + 2 * m, 0, t), { stale: false, lost: false }, 'control: 2 min of 401 is tolerated');
+}
+// stream text: totals, positions sorted by value with their strategy, manual positions labelled, order names resolved
+{
+  const me = { realized_pnl_cents: 50580, unrealized_pnl_cents: -120, holdings: [
+    { external_id: 'a', name: 'Small', cost_basis_cents: 1000, current_value_cents: 900 },
+    { external_id: 'b', name: 'Big', cost_basis_cents: 2000, current_value_cents: 2500 }],
+    trades: [{ occurred_at: '2026-10-18T04:29:15Z', side: 'buy', external_id: 'b', cash_cents: 2000 }] };
+  const txt = streamText(me, { b: 'Big' }, { x: { alive: true }, y: { alive: false } }, 0.13, 0, (id) => (id === 'b' ? 'crash' : ''), 3 * 3600e3 + 5 * 60e3);
+  const lines = txt.split('\n');
+  assert.match(lines[1], /Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2/);
+  assert.match(lines[2], /rising 13 pct {3}Contestants alive 1 {3}Bot up 3h05/);
+  assert.match(lines[5], /^Big +crash +20\.00 +25\.00 +\+5\.00$/, 'highest value first, with its strategy');
+  assert.match(lines[6], /^Small +manual/, 'control: a position the engine did not open is labelled manual');
+  assert.match(txt, /04:29 {2}buy {3}Big/);
+  assert.ok(lines.every((l) => l.length <= 90), 'fits 90 columns');
 }
 console.log('check ok');

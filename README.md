@@ -18,6 +18,7 @@ and can announce its trades in the contestant's Kick chat. A local dashboard sho
 - [Tutorial: import your cookies with EditThisCookie](#tutorial-import-your-cookies-with-editthiscookie)
 - [Running it](#running-it)
 - [Dashboard](#dashboard)
+- [Live stream](#live-stream)
 - [Monitoring](#monitoring)
 - [Backtesting and self-check](#backtesting-and-self-check)
 - [Safety rules built in](#safety-rules-built-in)
@@ -368,6 +369,22 @@ themselves. `node scripts/screenshots.mjs` retakes all the screenshots above fro
 desktop and phone, with the hover tooltips and filters shown). `--anon` replaces every contestant name with
 "Player N", hides stock ids and the site host, and stops if any of them is still on the page.
 
+## Live stream
+
+A 24/7 stream of the bot's state (totals, open positions, last orders) that runs on a 1 GB VPS next to other jobs.
+There is no browser anywhere: the engine pushes a 90-column text dashboard over ssh every 10 s, and `stream/run.sh`
+has ffmpeg draw it (`drawtext`), encode it and send it to the RTMP(S) ingest. Measured: 7% of one core and 94 MB of
+RAM at 1280x720, 5 fps.
+
+1. On the server (Ubuntu with ffmpeg and the DejaVu fonts): copy `stream/run.sh` to `~/szdash/`, write the full
+   ingest URL with the stream key into `~/szdash/url` (`chmod 600`), start
+   `nohup sh ~/szdash/run.sh >/dev/null 2>&1 &` and add the same line to the crontab with `@reboot`.
+2. On the PC: set `STREAM_SSH` (the server's ssh host alias) in `.env`, and `STREAM_SSH_BIN` if `ssh` is not on
+   PATH. Restart the engine.
+
+Without the `url` file the script waits and streams nothing. A frozen "data HH:MM:SS UTC" time on the stream means
+the PC stopped pushing. ffmpeg errors go to `~/szdash/err.log`; the script restarts ffmpeg 10 s after any drop.
+
 ## Monitoring
 
 - `node status.mjs` prints recent deaths, market breadth, trade count, API blocks and the PnL of each strategy, from
@@ -387,6 +404,7 @@ desktop and phone, with the hover tooltips and filters shown). `--anon` replaces
 | `hp_feed` | the map's health feed appeared or went silent (frame headers, for diagnosis) |
 | `tune`, `tune_crash`, `tune_surv`, `tune_top` | parameter re-tuning result per strategy |
 | `params_reload` | an edit to `params.json` was picked up without a restart |
+| `stream_err` | the ssh push of the stream text could not start (wrong `STREAM_SSH_BIN`) |
 | `dashboard_err` | the dashboard server failed to start (trading is not affected) |
 
 - Telegram, if configured: lost session, long API block, strategy switched off, new parameters, daily PnL.
@@ -431,6 +449,7 @@ desktop and phone, with the hover tooltips and filters shown). `--anon` replaces
 | `import-cookies.mjs` | EditThisCookie import |
 | `kick_say.py` | posts one chat line (Python, because Kick blocks Node's TLS fingerprint) |
 | `scripts/register-task.ps1` | Windows scheduled task |
+| `stream/run.sh` | live stream of the text dashboard (ffmpeg, runs on a server) |
 | `scripts/screenshots.mjs` | dashboard screenshots for this README (`--anon` for anonymized ones) |
 | `docs/screenshots/` | those screenshots |
 | `.env.example` | configuration template |

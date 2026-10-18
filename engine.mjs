@@ -4,8 +4,8 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { execFile, fork } from 'node:child_process';
-import { tune, tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck } from './backtest.mjs';
+import { execFile, fork, spawn } from 'node:child_process';
+import { tune, tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamText } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST; // event site domain, e.g. example.com (api.<host>, event-public.<host>)
@@ -332,6 +332,16 @@ const STARTED = Date.now();
 let lastMarket = null, lastEquity = 0;
 // /me has no cash field: cash = balance after the latest order (orders are the only cash moves), seeded from the log
 let lastCash = (() => { const l = fs.readFileSync(LOG, 'utf8').split('\n').findLast((x) => x.includes('"balance_after_cents"')); return l ? JSON.parse(l).res.balance_after_cents : null; })();
+// Stream: a text dashboard pushed every 10 s over ssh to STREAM_SSH (host alias), where stream/run.sh has ffmpeg
+// draw it (drawtext), encode and send it to the RTMP ingest. No browser anywhere: fits a 1 GB box next to other jobs.
+let lastStream = 0;
+function pushStream() {
+  if (!me) return;
+  const names = Object.fromEntries((lastMarket?.stocks || []).map((x) => [x.id, x.name]));
+  const p = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, 'cat > szdash/dash.tmp && mv szdash/dash.tmp szdash/dash.txt'], { stdio: ['pipe', 'ignore', 'ignore'] });
+  p.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
+  p.stdin.end(streamText(me, names, health, lastMarket?.breadth ?? 0, STARTED, (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : '')));
+}
 function writeLive() {
   const entry = {};
   for (const h of me?.holdings || []) if (state.entryAt[h.external_id]) entry[h.external_id] = entryPx(h);
@@ -339,6 +349,7 @@ function writeLive() {
     trialOff, api: { blockedUntil, backoff, lastOk, authLostAt }, lastReb, diedAt };
   fs.writeFileSync('live.json.tmp', JSON.stringify(live));
   fs.renameSync('live.json.tmp', 'live.json');
+  if (process.env.STREAM_SSH && Date.now() - lastStream >= 10e3) { lastStream = Date.now(); pushStream(); }
   if (me && Date.now() - lastEquity >= 60e3) {
     lastEquity = Date.now();
     fs.appendFileSync('data/equity.jsonl', JSON.stringify({ t: lastEquity, value: lastCash == null ? null : lastCash + me.portfolio_value_cents, cash: lastCash, held: me.portfolio_value_cents, realized: me.realized_pnl_cents, unrealized: me.unrealized_pnl_cents, n: me.holdings.length }) + '\n');
