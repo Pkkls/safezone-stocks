@@ -15,7 +15,7 @@ protects positions you open by hand, tunes itself, announces its trades in Kick 
 
 ## What the engine does
 
-Positions every 5 s, map every 10 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
+Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
 
 | Strategy | Buys | Sells |
 |---|---|---|
@@ -78,7 +78,7 @@ after `END_AT`.
 
 ### Live stream (no browser)
 
-The engine pushes a text dashboard over ssh every 10 s, rotating 5 pages every 20 s, plus a ticker line. ffmpeg frames
+The engine pushes a text dashboard every 2 s over one long-lived ssh connection, rotating 5 pages every 20 s, plus a ticker line. ffmpeg frames
 them with an ASCII "CX" banner, a blinking LIVE tag, a dancing ASCII mascot (`stream/dance1-4.txt`, 4 poses a second),
 one floating ASCII art per page under it (`stream/art1-5.txt`: money bag, candles, bull, skull, shield) and the
 scrolling ticker; `stream/run.sh` on a server has ffmpeg draw it

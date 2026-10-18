@@ -171,7 +171,7 @@ function trialOn(prefix) {
 // Exits, every 5 s. Manual positions: trail, death, hp, elimination, dump; never on time. Engine positions: crash ('dip')
 // and survivor buys sell on time unless in run mode (peak >= runStart x entry: runTrail trail, RUN_HOLD cap); the top
 // basket sells on rank (scan). All: status, death, hp, elimination. /me 500s: last holdings, repriced one by one.
-let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastStream = 0, lastBreadth = 0, names = {}, movers = [], ranking = [];
+let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastBreadth = 0, names = {}, movers = [], ranking = [];
 const lastPrice = {}, status = {}, eliminated = {}, lastTradeAt = {}, STARTED = Date.now();
 async function guard() {
   const r = await api('stock-market/me');
@@ -208,19 +208,25 @@ async function guard() {
     if (why) await sellOwn(h, why);
   }
   save();
-  // stream: every 10 s, the ticker and the current page (a new one every 20 s) split into one text per color, each
-  // after an "@@name" line, to STREAM_SSH; there awk writes ticker.txt, dash.txt (white) and g/r/y/c.txt (each
-  // replaced whole), drawn and streamed by stream/run.sh
-  if (me && process.env.STREAM_SSH && Date.now() - lastStream >= 10e3) {
-    lastStream = Date.now();
-    const split = 'cd szdash && awk \'/^@@[a-z]+$/ { f = substr($0, 3) ".tmp"; printf "" > f; next } { print > f }\' && for f in ticker dash g r y c art; do mv -f $f.tmp $f.txt; done';
-    const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, split], { stdio: ['pipe', 'ignore', 'ignore'] });
-    c.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
-    const d = { me, names, health, roster, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
-      strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
-    const i = Math.floor(Date.now() / 20e3) % pages.length, L = layers(pages[i]);
-    c.stdin.end(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c, art: ARTS[i] }).map(([k, v]) => `@@${k}\n${v}`).join(''));
+}
+
+// Stream, every 2 s: the ticker and the current page (a new one every 20 s) split into one text per color, each after
+// an "@@name" line and closed by "@@end", written to ONE long-lived ssh to STREAM_SSH (no handshake per frame). There
+// awk writes ticker.txt, dash.txt (white), g/r/y/c.txt and art.txt, each replaced whole at "@@end", drawn by
+// stream/run.sh. A dead connection is reopened on the next tick.
+const SPLIT = 'cd szdash && exec awk \'/^@@end$/ { for (k in seen) { close(k ".tmp"); system("mv -f " k ".tmp " k ".txt") } delete seen; next } /^@@[a-z]+$/ { f = substr($0, 3); seen[f] = 1; printf "" > (f ".tmp"); next } { print > (f ".tmp") }\'';
+let pipe = null;
+function pushStream() {
+  if (!me || !process.env.STREAM_SSH) return;
+  if (!pipe) {
+    pipe = spawn(process.env.STREAM_SSH_BIN || 'ssh', ['-o', 'ServerAliveInterval=30', process.env.STREAM_SSH, SPLIT], { stdio: ['pipe', 'ignore', 'ignore'] });
+    const drop = (e) => { if (e) log({ ev: 'stream_err', msg: String(e.message || e) }); pipe = null; };
+    pipe.on('error', drop); pipe.on('exit', () => drop()); pipe.stdin.on('error', drop);
   }
+  const d = { me, names, health, roster, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
+    strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
+  const i = Math.floor(Date.now() / 20e3) % pages.length, L = layers(pages[i]);
+  pipe?.stdin.write(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c, art: ARTS[i] }).map(([k, v]) => `@@${k}\n${v}`).join('') + '@@end\n');
 }
 
 // Entries, every 15 s, one order per scan. Top basket: hold the topN highest-priced live stocks, sell at rank topExit
@@ -340,5 +346,5 @@ setInterval(() => { if (Date.now() > END) { log({ ev: 'end' }); daily().finally(
 setInterval(() => { const s = stuck(Date.now(), lastOk, blockedUntil, authLostAt); if (s.stale || s.lost) { log({ ev: 'watchdog', ...s }); process.exit(1); } }, 30e3); // the supervisor restarts us
 log({ ev: 'start', dry: DRY, P });
 await guard().catch((e) => log({ ev: 'err', fn: 'guard', msg: e.message }));
-loop(guard, 5e3); loop(scan, 15e3); loop(readMap, 10e3); loop(record, 3 * 60e3); loop(retune, 2 * 3600e3); loop(daily, 24 * 3600e3); loop(reloadParams, 30e3);
+loop(guard, 5e3); loop(scan, 15e3); loop(readMap, 3e3); loop(pushStream, 2e3); // map: the site caches it 2 s; stream: near real time loop(record, 3 * 60e3); loop(retune, 2 * 3600e3); loop(daily, 24 * 3600e3); loop(reloadParams, 30e3);
 setTimeout(() => retune().catch((e) => log({ ev: 'err', fn: 'retune', msg: e.message })), 60e3); // after the first scans: names known
