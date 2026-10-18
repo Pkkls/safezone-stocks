@@ -46,7 +46,7 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
 
 | Strategy | Trigger | Exit |
 |---|---|---|
-| `crash` | a stock drops 25% or more between two scans (15 s) with no pump in the 3 min before | after 10 min |
+| `crash` | a stock drops 25% or more between two scans (15 s) with no pump in the 3 min before; 5 min cooldown after any exit on that stock (30 min for the other strategies) | after 10 min |
 | `surv` | 20 s after a new death, buy the 2 highest-priced live contestants | after 30 min |
 | `mom` | momentum, only while at least 60% of the market is rising together | 20% trail or 10 min |
 
@@ -54,7 +54,9 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
 
 - **Run mode**: a rebound or survivor buy that gains 10% switches to a 15% trailing stop from its peak, held up to
   2 hours, instead of the fixed exit time.
-- **Death**: sell as soon as the contestant dies (map grave or health feed), before the -20% impulse lands.
+- **Death**: sell as soon as the contestant dies (map grave, health feed or roster `eliminated_at`), before the -20%
+  impulse lands. Known deaths are reloaded from `data/deaths.jsonl` at start, because the map can black out (an
+  in-game "EMP" hides graves and health for about 30 min).
 - **Low health**: sell when the contestant drops under 25% of max HP. Never buy under 40% HP or outside the zone.
 - **Dump**: sell when a single sell knocks the price down 5% or more while the market is weak.
 
@@ -67,6 +69,17 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
   and dump exits. When you hold the same stock as the engine, it only sells its own shares.
 - Every 2 hours it re-runs the momentum backtest on the last 6 hours and adopts new parameters only if they beat the
   current ones by a clear margin over at least 10 trades.
+- `params.json` is hot-reloaded every 30 s: edit it instead of restarting. A restart costs about a minute, which is
+  enough to miss a signal.
+
+**Data it records for later analysis** (all in `data/`, git-ignored):
+
+| File | Content |
+|---|---|
+| `tape-YYYY-MM-DD.jsonl` | every public trade: stock, time, price before/after, side, size, anonymous user id |
+| `deaths.jsonl` | deaths read from the map |
+| `health.jsonl` | every HP change: `username, hp, max, alive, out` (never positions) |
+| `settled.jsonl` | last known price and status of an eliminated stock when it disappears from the API, to find out what settlement pays |
 
 ## What was measured
 
@@ -82,6 +95,14 @@ the engine's own price impact. Each rule was split into two halves of the period
   few cases.
 - **The market as a whole drifts down**: holding any stock for 30 min lost 1.4% to 5% on average. Trading less is
   part of the strategy.
+- **Faster is not always better**: scanning for crashes every 5 s instead of 15 s caught more of them but earned less
+  (+39% vs +56% summed on the first half), because it buys mid-fall, before the low.
+- **Adding to winners lost**: buying a second tranche when a position turns into a run returned -2.2% and -1.9% on
+  that tranche in the two halves. The run itself pays, the late entry does not.
+- **Live results of the late game**: the survivor trial made +81 Cx over 6 round trips (2 winners: +24% and +53%,
+  ridden in run mode), crash/dip rebounds +20 Cx over 9.
+
+All these samples are small (often under 20 cases). Treat every number as a hint, not a law.
 
 ## Setup
 

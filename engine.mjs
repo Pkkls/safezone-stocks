@@ -47,7 +47,7 @@ function entryPx(h) {
   const l = fs.readFileSync(LOG, 'utf8').split('\n').filter((x) => x.includes('"ev":"stock-market/buy"') && x.includes(`"name":${JSON.stringify(h.name)}`) && x.includes('"status":200')).at(-1);
   return (entryCache[k] = (l && JSON.parse(l).res?.price_after_cents) || Infinity);
 }
-const CRASH_DROP = 0.25, CRASH_FLAT = 0.10, CRASH_TRIAL = 10;
+const CRASH_DROP = 0.25, CRASH_FLAT = 0.10, CRASH_TRIAL = 10, CRASH_COOLDOWN = 5 * 60e3;
 const lastScan = {}; // external_id -> { price, t } at the previous scan
 // trial guard: after CRASH_TRIAL round trips of a strategy (buy reason prefix), stop it if their total is negative
 const trialOff = {};
@@ -150,11 +150,21 @@ let me = null, authAlerted = false, lastBreadth = null; // null until the first 
 // Graves are matched to stocks by username = stock name. Position frames are never read (see decodeHealth).
 const MAP = `https://event-public.${HOST}/event/map-snapshot`;
 const diedAt = {}; // lowercased username -> latest death time (ms)
+// seed from the local death log: graves vanish during map blackouts, a restart then would forget every death
+if (fs.existsSync('data/deaths.jsonl')) for (const l of fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); diedAt[d.u] = Math.max(diedAt[d.u] || 0, d.t); }
 async function readMap() {
   const r = await ctx.request.get(MAP, { headers: H });
   if (r.status() !== 200) return log({ ev: 'map_err', status: r.status() });
   const { frames } = await r.json();
   readHealth(frames);
+  // the roster also carries eliminated_at, and stays filled during map blackouts (18/10 02:09 "emp": no graves, no hp)
+  for (const f of frames) {
+    if (!f.text || !f.text.includes('"contestants"')) continue;
+    for (const c of JSON.parse(f.text).data.roster?.contestants || []) {
+      const name = String(c.name).toLowerCase(), t = c.eliminated_at && Date.parse(c.eliminated_at);
+      if (t && !diedAt[name]) diedAt[name] = t;
+    }
+  }
   for (const f of frames) {
     if (!f.text || !f.text.includes('"game_items"')) continue;
     for (const it of JSON.parse(f.text).data.items) {
@@ -172,7 +182,16 @@ async function readMap() {
 let mapLoaded = false;
 // Health (added 18/10: avoid buying contestants about to die), decoded by decodeHealth (backtest.mjs) from the map snapshot.
 const health = {}; // lowercased username -> { hp, max, alive, out }
-const readHealth = (frames) => Object.assign(health, decodeHealth(frames));
+// every change is appended to data/health.jsonl so HP-based rules can be backtested later
+function readHealth(frames) {
+  const lines = [];
+  for (const [u, h] of Object.entries(decodeHealth(frames))) {
+    const o = health[u];
+    if (!o || o.hp !== h.hp || o.alive !== h.alive || o.out !== h.out) lines.push(JSON.stringify({ t: Date.now(), u, ...h }));
+    health[u] = h;
+  }
+  if (lines.length) fs.appendFileSync('data/health.jsonl', lines.join('\n') + '\n');
+}
 // risky = dead in the feed, outside the zone, or under HP_MIN of max: never buy, and sell a holding under HP_EXIT
 const HP_MIN = 0.4, HP_EXIT = 0.25;
 const hpOf = (name) => health[name.toLowerCase()];
@@ -280,15 +299,26 @@ async function guard() {
   save();
 }
 
+const lastKnown = {}; let firstPageTotal = null; // settlement tracking (see scan)
 async function scan() {
   const now = Date.now(), stocks = [], since = now - Math.max(P.lookback, BREADTH_WINDOW), spark = {};
   for (let page = 1; page <= 3; page++) {
     const s = await api(`stock-market/stocks?page=${page}&pageSize=100&search=`);
+    if (page === 1) firstPageTotal = s.j?.total ?? null;
     const k = await api(`stock-market/sparklines?bucket_ms=60000&since_ms=${since}&page=${page}&pageSize=100`);
     stocks.push(...(s.j?.stocks || []));
     for (const x of k.j?.sparklines || []) spark[x.external_id] = x.points;
     if ((s.j?.stocks || []).length < 100) break;
   }
+  // settlement value is not public: settled stocks just vanish from the listing. Log the last known state of an
+  // eliminated stock the first time a complete listing no longer has it (data/settled.jsonl).
+  const listed = new Set(stocks.map((s) => s.external_id));
+  if (stocks.length && stocks.length >= (firstPageTotal ?? Infinity)) {
+    for (const [id, k] of Object.entries(lastKnown)) {
+      if (k.eliminated_at && !listed.has(id)) { fs.appendFileSync('data/settled.jsonl', JSON.stringify({ t: now, id, ...k }) + '\n'); delete lastKnown[id]; }
+    }
+  }
+  for (const s of stocks) lastKnown[s.external_id] = { name: s.name, price: s.last_price_cents, status: s.status, eliminated_at: s.eliminated_at, settles_at: s.settles_at };
   for (const s of stocks) { // merge: a failed page must not erase known statuses
     status[s.external_id] = s.status;
     // a dead contestant stays status 'active' with eliminated_at/settles_at set (settles 4 h later, value unknown
@@ -309,11 +339,12 @@ async function scan() {
   log({ ev: 'scan', breadth: +breadth.toFixed(2), stocks: stocks.length });
   if (!me || !me.trading_enabled || me.holdings.length >= MAX_POS) return;
   const held = new Set(me.holdings.map((h) => h.external_id));
-  const eligible = active
+  const live = active
     .filter((s) => !held.has(s.external_id))
-    .filter((s) => now - (state.exitedAt[s.external_id] || 0) > COOLDOWN_MS)
     .filter((s) => !diedAt[s.name.toLowerCase()] && !s.eliminated_at) // a grave = dead for good (18/10: all 87 graves are eliminated stocks)
     .filter((s) => !risky(s.name)); // low hp / outside the zone / dead in the health feed
+  const cooled = (ms) => live.filter((s) => now - (state.exitedAt[s.external_id] || 0) > ms);
+  const eligible = cooled(COOLDOWN_MS);
 
   if (pendingDeath && now - pendingDeath >= SURV_DELAY) {
     pendingDeath = 0;
@@ -337,7 +368,10 @@ async function scan() {
   // A >= 25% drop between two scans with no pump before (< +10% over the 3 min before) is a whale exit, not a
   // dump: bought 3 s later, held 10 min, +11.5% (n=8, 20:22-22:30) and +9.3% (n=2, 22:30-00:40), fees and own impact
   // included. Thin sample: tried on purpose, cut automatically after 10 losing-in-total round trips.
-  const dips = crashOn() ? eligible
+  // shorter cooldown than other entries: 18/10 01:54 a -29% crash was skipped on a stock sold 12 min earlier by
+  // another strategy; on the tape the crash result is the same at 5, 10 and 30 min (n=15).
+  // A 5 s scan was tested too and lost (sum +39% vs +56% at 15 s, first half): it buys mid-fall, before the low.
+  const dips = crashOn() ? cooled(CRASH_COOLDOWN)
     .map((s) => { const p = prevScan[s.external_id], p3 = priceSince(s.external_id, now - 3 * 60e3); return { s, ret: p && p3 && p.price / p3 - 1 < CRASH_FLAT ? s.last_price_cents / p.price - 1 : 0 }; })
     .filter((c) => c.ret <= -CRASH_DROP)
     .sort((a, b) => a.ret - b.ret) : [];
@@ -415,6 +449,16 @@ async function daily() {
   notify(`portfolio ${(me.portfolio_value_cents / 100).toFixed(2)}, realized PnL ${(me.realized_pnl_cents / 100).toFixed(2)}, unrealized ${(me.unrealized_pnl_cents / 100).toFixed(2)}`);
 }
 
+// hot reload: edit params.json and the next tick uses it, no restart (a restart at 01:46 on 18/10 missed a -42% crash)
+let paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
+async function reloadParams() {
+  const m = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
+  if (m === paramsMtime) return;
+  paramsMtime = m;
+  P = { ...DEFAULTS, ...readJson(PARAMS) };
+  log({ ev: 'params_reload', P });
+}
+
 const loop = (fn, ms) => { let busy = false; setInterval(async () => { if (busy) return; busy = true; try { await fn(); } catch (e) { log({ ev: 'err', fn: fn.name, msg: e.message }); } finally { busy = false; } }, ms); };
 setInterval(() => { if (Date.now() > END) { log({ ev: 'end' }); daily().finally(() => process.exit(0)); } }, 60e3);
 log({ ev: 'start', dry: DRY, P });
@@ -425,3 +469,4 @@ loop(readMap, 10e3);
 loop(record, RECORD_EVERY);
 loop(retune, TUNE_EVERY);
 loop(daily, 24 * 3600e3);
+loop(reloadParams, 30e3);
