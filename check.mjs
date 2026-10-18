@@ -2,7 +2,7 @@
 // refuse to adopt params that do not clearly beat the current ones. node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash } from './backtest.mjs';
+import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 const ref = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -98,5 +98,21 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.ok(r.total > 0.2, 'crash rebound should be a clear win');
   assert.strictEqual(simulateCrash(prepare([...flat, row(210e3, 1000, 1000), row(2000e3, 1000, 1000)]), Q).n, 0, 'control: no crash, no trade');
   assert.strictEqual(tuneCrash(crashTape, Q).adopt, null, 'one trade must never be enough to adopt');
+}
+// survivors: after a death the highest-priced live stock is bought (never the dead one), held survHold;
+// the tuner switches the strategy off when it loses and no setting wins in both halves
+{
+  const t = 1e12, row = (e, dt, pb, pa) => ({ e, t: t + dt, pb, pa, s: 'b' });
+  const tape = [];
+  for (let k = 0; k <= 200; k++) tape.push(row('top', k * 30e3, 2000, 2000 - k * 5), row('low', k * 30e3, 1000, 1000), row('dead', k * 30e3, 3000 + k * 20, 3000 + k * 20)); // rising: buying it would win
+  tape.sort((a, b) => a.t - b.t);
+  const Q = { survTop: 1, survHold: 10 * 60e3, runStart: 1.2, runTrail: 0.8 };
+  const deaths = [{ u: 'deadname', t: t + 40 * 60e3 }];
+  const r = simulateSurv(prepare(tape), Q, deaths, { dead: 'deadname' });
+  assert.strictEqual(r.n, 1, 'one death, one survivor buy');
+  assert.ok(r.total < 0, 'bought "top" (falling), not the dead stock');
+  assert.strictEqual(simulateSurv(prepare(tape), { ...Q, survTop: 0 }, deaths).n, 0, 'control: survTop 0 trades nothing');
+  const many = Array.from({ length: 10 }, (_, i) => ({ u: 'deadname', t: t + (35 + i * 5) * 60e3 }));
+  assert.deepStrictEqual(tuneSurv(tape, { ...Q, survTop: 2, survHold: 600e3 }, many, { dead: 'deadname' }).adopt, { survTop: 0 }, 'losing strategy must be switched off');
 }
 console.log('check ok');

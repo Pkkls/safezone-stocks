@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { tune, tuneCrash, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth } from './backtest.mjs';
+import { tune, tuneCrash, tuneSurv, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST; // event site domain, e.g. example.com (api.<host>, event-public.<host>)
@@ -22,7 +22,9 @@ const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
 // retune() replaces them from fresh tape.
 const DEFAULTS = { lookback: 2 * 60e3, entryMin: 0.15, entryMax: 99, trail: 0.80, maxHold: 10 * 60e3, size: 0.25, minBreadth: 0.6, dumpExit: true, dumpBreadth: 0.45,
   // crash rebound + run mode, self-tuned by retune() through tuneCrash (backtest.mjs)
-  crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85 };
+  crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
+  // survivors after a death, self-tuned through tuneSurv (survTop 0 = off)
+  survTop: 2, survHold: 30 * 60e3 };
 const PARAMS = 'params.json';
 let P = { ...DEFAULTS, ...readJson(PARAMS) };
 const MIN_BUY = 1000;          // 10.00 minimum per entry
@@ -67,11 +69,11 @@ function trialOn(prefix) {
 }
 const crashOn = () => trialOn('crash');
 // Survivors after a death (aggressive trial asked by the operator, 18/10): 20 s after a new
-// grave, buy the SURV_TOP highest-priced live stocks, hold SURV_HOLD. Tape 20:22-00:40, top 2 held 30 min: 23h UTC
+// grave, buy the survTop highest-priced live stocks, hold survHold. Tape 20:22-00:40, top 2 held 30 min: 23h UTC
 // +3.5% (n=14, 64% win) but 21h -10.4% (n=102): the late game only, hence the same 10-round-trip kill switch.
 // Live 18/10 01:08-01:42: 5 closed -23.51 Cx, but the 6th (riding in run mode) +60.84 open: small losses, rare big
-// runs. Kept on; the 10-round-trip switch decides. SURV_TOP 0 disables it.
-const SURV_TOP = 2, SURV_HOLD = 30 * 60e3, SURV_DELAY = 20e3;
+// runs. Kept on; the 10-round-trip switch decides. survTop 0 disables it.
+const SURV_DELAY = 20e3; // count and hold: P.survTop, P.survHold (self-tuned)
 let pendingDeath = 0;
 // Size cap: pools are thin (cash reserve R ~ R0*sqrt(P/1000), R0 = 10k Cx). A buy of c moves the price ~2c/R and the
 // round trip costs ~2c/R. 1st live dip (17/10 22:18, 219 Cx at 10.69): our own buy pushed +4.2%, the round trip
@@ -279,7 +281,7 @@ async function guard() {
     const run = dip && state.peak[id] >= entryPx(h) * P.runStart;
     const why = run && p < state.peak[id] * P.runTrail ? `runtrail ${p}<${Math.round(state.peak[id] * P.runTrail)}`
       : !dip && p < state.peak[id] * P.trail ? `trail ${p}<${Math.round(state.peak[id] * P.trail)}`
-      : Date.now() - state.entryAt[id] > (run ? RUN_HOLD : kind === 'surv' ? SURV_HOLD : dip ? P.dipHold : P.maxHold || Infinity) ? `time ${p}`
+      : Date.now() - state.entryAt[id] > (run ? RUN_HOLD : kind === 'surv' ? P.survHold : dip ? P.dipHold : P.maxHold || Infinity) ? `time ${p}`
       : status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}`
       : recentlyDied(h.name, state.entryAt[id] - 60e3) || hpOf(h.name)?.alive === false ? `died ${p}`
       : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
@@ -351,8 +353,8 @@ async function scan() {
 
   if (pendingDeath && now - pendingDeath >= SURV_DELAY) {
     pendingDeath = 0;
-    // at most SURV_TOP survivor positions open at once: 3 deaths in 2 min opened 6 on 18/10 01:08-01:10
-    const room = SURV_TOP - me.holdings.filter((h) => state.kind[h.external_id] === 'surv').length;
+    // at most P.survTop survivor positions open at once: 3 deaths in 2 min opened 6 on 18/10 01:08-01:10
+    const room = P.survTop - me.holdings.filter((h) => state.kind[h.external_id] === 'surv').length;
     if (room > 0 && trialOn('surv')) {
       const top = eligible.filter((s) => s.last_trade_at && now - Date.parse(s.last_trade_at) < 30 * 60e3)
         .sort((a, b) => b.last_price_cents - a.last_price_cents).slice(0, room);
@@ -444,11 +446,16 @@ async function retune() {
   // crash rebound + run mode: same walk-forward idea, adopted only if positive in both halves of the window
   const c = tuneCrash(tape, P);
   log({ ev: 'tune_crash', cur: c.cur, best: c.best && { ...c.best.r, Q: c.best.Q }, adopted: !!c.adopt });
-  if (!adopt && !c.adopt) return;
-  P = { ...P, ...adopt, ...c.adopt }; // keep params the grids do not cover (dumpExit)
+  // survivors: replayed on the logged deaths; may switch the strategy off (survTop 0) or back on
+  const deaths = [...new Map(fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).map((d) => [d.u + d.t, d])).values()].sort((a, b) => a.t - b.t);
+  const names = Object.fromEntries(Object.entries(lastKnown).map(([id, k]) => [id, String(k.name).toLowerCase()]));
+  const sv = tuneSurv(tape, { ...P, runStart: c.adopt?.runStart ?? P.runStart, runTrail: c.adopt?.runTrail ?? P.runTrail }, deaths, names);
+  log({ ev: 'tune_surv', cur: sv.cur, best: sv.best && { ...sv.best.r, Q: sv.best.Q }, adopt: sv.adopt });
+  if (!adopt && !c.adopt && !sv.adopt) return;
+  P = { ...P, ...adopt, ...c.adopt, ...sv.adopt }; // keep params the grids do not cover (dumpExit)
   fs.writeFileSync(PARAMS, JSON.stringify(P));
   paramsMtime = fs.statSync(PARAMS).mtimeMs; // our own write, not an edit to reload
-  notify(`new params ${JSON.stringify(P)} (6h backtest: momentum ${cur.pnl} -> ${best.r.pnl}, crash ${c.cur.total.toFixed(2)} -> ${c.best?.r.total.toFixed(2)})`);
+  notify(`new params ${JSON.stringify(P)} (6h backtest: momentum ${cur.pnl} -> ${best.r.pnl}, crash ${c.cur.total.toFixed(2)} -> ${c.best?.r.total.toFixed(2)}, survivors ${JSON.stringify(sv.adopt)})`);
 }
 
 async function daily() {
@@ -475,6 +482,7 @@ loop(scan, SCAN_EVERY);
 loop(readMap, 10e3);
 loop(record, RECORD_EVERY);
 loop(retune, TUNE_EVERY);
-retune().catch((e) => log({ ev: 'err', fn: 'retune', msg: e.message })); // tune at start too, not 2 h later
+// tune at start too, not 2 h later; after the first scans so stock names are known (survivor replay skips the dead)
+setTimeout(() => retune().catch((e) => log({ ev: 'err', fn: 'retune', msg: e.message })), 60e3);
 loop(daily, 24 * 3600e3);
 loop(reloadParams, 30e3);

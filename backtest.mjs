@@ -170,6 +170,49 @@ export function tuneCrash(tape, current, minTrades = 8) {
   return { cur, best, adopt: ok ? best.Q : null };
 }
 
+// Survivors after a death, as traded: 20 s after each death, buy the survTop highest-priced stocks traded in the
+// last 30 min (never the dead one), hold survHold, run mode as in simulateCrash. deaths = [{ u, t }] from
+// data/deaths.jsonl; names maps external_id -> lowercased contestant name (to skip the dead).
+export function simulateSurv({ paths, t0, t1 }, Q, deaths, names = {}) {
+  const { survTop, survHold, runStart, runTrail } = Q;
+  const net = (pe, px) => px / pe * (1 - FEE) ** 2 * (1 - 1e4 / (R0 * Math.sqrt(pe / 1000))) * (1 - 1e4 / (R0 * Math.sqrt(px / 1000))) - 1;
+  const tm = (t0 + t1) / 2, halves = [[], []], busyUntil = {};
+  for (const d of deaths) {
+    const t = d.t + 20e3;
+    if (t < t0 + 30 * 60e3 || t > t1) continue;
+    const alive = Object.entries(paths).filter(([id, p]) => names[id] !== d.u && p.ts.some((x) => x > t - 30 * 60e3 && x <= t) && !(busyUntil[id] > t))
+      .map(([id, p]) => ({ id, p, price: priceAt(p, t) })).filter((x) => x.price).sort((a, b) => b.price - a.price).slice(0, survTop);
+    for (const { id, p, price: pe } of alive) {
+      let pk = pe, run = false, px = null, u;
+      for (u = t; u <= t1; u += 5e3) {
+        const x = priceAt(p, u); pk = Math.max(pk, x);
+        if (pk >= pe * runStart) run = true;
+        if ((!run && u - t >= survHold) || (run && (x < pk * runTrail || u - t >= 2 * 3600e3))) { px = x; break; }
+      }
+      if (px === null) continue;
+      busyUntil[id] = u;
+      halves[t < tm ? 0 : 1].push(net(pe, px));
+    }
+  }
+  const sum = (v) => v.reduce((a, b) => a + b, 0);
+  return { n: halves[0].length + halves[1].length, h1: sum(halves[0]), h2: sum(halves[1]), total: sum(halves[0]) + sum(halves[1]) };
+}
+
+// survTop 0 = strategy off: adopted when no setting is profitable in both halves and the current one loses
+export function tuneSurv(tape, current, deaths, names, minTrades = 8) {
+  const d = prepare(tape);
+  const cur = simulateSurv(d, current, deaths, names);
+  let best = null;
+  for (const survTop of [1, 2, 3]) for (const survHold of [10, 20, 30, 60]) {
+    const Q = { survTop, survHold: survHold * 60e3, runStart: current.runStart, runTrail: current.runTrail };
+    const r = simulateSurv(d, Q, deaths, names);
+    if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q: { survTop, survHold: Q.survHold }, r };
+  }
+  if (best && best.r.total > cur.total + Math.max(0.10, Math.abs(cur.total) * 0.2)) return { cur, best, adopt: best.Q };
+  if (!best && current.survTop > 0 && cur.n >= minTrades && cur.total < 0) return { cur, best, adopt: { survTop: 0 } };
+  return { cur, best, adopt: null };
+}
+
 export const GRID = [];
 for (const lookback of [2, 5]) for (const entryMin of [0.05, 0.15, 0.3]) for (const entryMax of [0.6, 99])
   for (const trail of [0.7, 0.8, 0.9]) for (const maxHold of [0, 10, 30]) for (const minBreadth of [0, 0.4, 0.6])

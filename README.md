@@ -71,7 +71,9 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
   - momentum: adopts new parameters only if they beat the current ones by a clear margin over at least 10 trades;
   - crash rebound and run mode (`crashDrop`, `crashFlat`, `dipHold`, `runStart`, `runTrail`): 162 combinations
     replayed exactly as traded, adopted only with at least 8 trades, a profit in both halves of the window, and a
-    clear margin over the current set.
+    clear margin over the current set;
+  - survivors (`survTop`, `survHold`): replayed on the logged deaths. With no setting profitable in both halves and
+    a losing current one, it sets `survTop` to 0 (strategy off), and switches it back on when a setting wins again.
 
   Picking the best of many combinations on a small sample overfits. The kill switches are the safety net.
 - `params.json` is hot-reloaded every 30 s: edit it instead of restarting. A restart costs about a minute, which is
