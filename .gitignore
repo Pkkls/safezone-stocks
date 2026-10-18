@@ -1,0 +1,18 @@
+node_modules/
+__pycache__/
+profile/
+.playwright-mcp/
+# secrets and session
+.env
+.session.json
+cookies*.json
+# runtime state and logs (contain account data)
+state.json
+state.json.tmp
+params.json
+trades.jsonl
+*.log
+*.err
+# market data recorded live (other players' ids); only the anonymized test fixture is tracked
+data/*
+!data/opening-17-10.jsonl
