@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { tune, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth } from './backtest.mjs';
+import { tune, tuneCrash, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST; // event site domain, e.g. example.com (api.<host>, event-public.<host>)
@@ -20,7 +20,9 @@ const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
 // Strategy params. Defaults from backtest.mjs on the opening tape (17/10): 2-min lookback and a 10-min
 // time exit led every top combo; minBreadth gates momentum to market-wide inflow phases (see backtest.mjs).
 // retune() replaces them from fresh tape.
-const DEFAULTS = { lookback: 2 * 60e3, entryMin: 0.15, entryMax: 99, trail: 0.80, maxHold: 10 * 60e3, size: 0.25, minBreadth: 0.6, dumpExit: true, dumpBreadth: 0.45 };
+const DEFAULTS = { lookback: 2 * 60e3, entryMin: 0.15, entryMax: 99, trail: 0.80, maxHold: 10 * 60e3, size: 0.25, minBreadth: 0.6, dumpExit: true, dumpBreadth: 0.45,
+  // crash rebound + run mode, self-tuned by retune() through tuneCrash (backtest.mjs)
+  crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85 };
 const PARAMS = 'params.json';
 let P = { ...DEFAULTS, ...readJson(PARAMS) };
 const MIN_BUY = 1000;          // 10.00 minimum per entry
@@ -37,8 +39,9 @@ state.shares ||= {}; // external_id -> share subunits bought by the engine (stri
 
 // Rebound buys (kind 'dip' in state) exit on time/death only, after DIP_HOLD. Pump chasing was measured on 18/10
 // (20:22-00:40 tape): buying after a +5/10/20% buy loses -4% to -17% even 2 s after it, exit on the first dump sell.
-const DIP_HOLD = 10 * 60e3;
-const RUN_START = 1.10, RUN_TRAIL = 0.85, RUN_HOLD = 120 * 60e3; // doubled from 60 min on request (18/10)
+// hold time, run start and run trail live in P (dipHold, runStart, runTrail): self-tuned, hot-reloaded
+const RUN_HOLD = 120 * 60e3; // doubled from 60 min on request (18/10)
+const MANUAL_TRAIL = 0.85;   // manual positions: not tuned (no tape of their entries)
 // entry price of a holding: price_after of its last successful buy in the log (cached per stock)
 const entryCache = {};
 function entryPx(h) {
@@ -47,7 +50,7 @@ function entryPx(h) {
   const l = fs.readFileSync(LOG, 'utf8').split('\n').filter((x) => x.includes('"ev":"stock-market/buy"') && x.includes(`"name":${JSON.stringify(h.name)}`) && x.includes('"status":200')).at(-1);
   return (entryCache[k] = (l && JSON.parse(l).res?.price_after_cents) || Infinity);
 }
-const CRASH_DROP = 0.25, CRASH_FLAT = 0.10, CRASH_TRIAL = 10, CRASH_COOLDOWN = 5 * 60e3;
+const CRASH_TRIAL = 10, CRASH_COOLDOWN = 5 * 60e3; // drop/flat thresholds: P.crashDrop, P.crashFlat
 const lastScan = {}; // external_id -> { price, t } at the previous scan
 // trial guard: after CRASH_TRIAL round trips of a strategy (buy reason prefix), stop it if their total is negative
 const trialOff = {};
@@ -255,7 +258,7 @@ async function guard() {
     if (!state.entryAt[id]) {
       state.manualPeak ||= {};
       const pk = state.manualPeak[id] = Math.max(state.manualPeak[id] || 0, p);
-      const guardWhy = p < pk * RUN_TRAIL ? `manual trail ${p}<${Math.round(pk * RUN_TRAIL)}`
+      const guardWhy = p < pk * MANUAL_TRAIL ? `manual trail ${p}<${Math.round(pk * MANUAL_TRAIL)}`
         : recentlyDied(h.name, Date.now() - 10 * 60e3) || hpOf(h.name)?.alive === false ? `manual died ${p}`
         : risky(h.name, HP_EXIT) ? `manual hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
         : eliminated[id] ? `manual eliminated ${p}`
@@ -273,10 +276,10 @@ async function guard() {
     const dip = kind === 'dip' || kind === 'surv'; // exit on time/death only: no trail or dump exit (the backtests held plain)
     // ...unless the rebound turned into a run (peak >= +10% over entry, 18/10: do not exit too early): then ride it
     // with a 15% trail from the peak instead of selling at 10 min, capped at RUN_HOLD.
-    const run = dip && state.peak[id] >= entryPx(h) * RUN_START;
-    const why = run && p < state.peak[id] * RUN_TRAIL ? `runtrail ${p}<${Math.round(state.peak[id] * RUN_TRAIL)}`
+    const run = dip && state.peak[id] >= entryPx(h) * P.runStart;
+    const why = run && p < state.peak[id] * P.runTrail ? `runtrail ${p}<${Math.round(state.peak[id] * P.runTrail)}`
       : !dip && p < state.peak[id] * P.trail ? `trail ${p}<${Math.round(state.peak[id] * P.trail)}`
-      : Date.now() - state.entryAt[id] > (run ? RUN_HOLD : kind === 'surv' ? SURV_HOLD : dip ? DIP_HOLD : P.maxHold || Infinity) ? `time ${p}`
+      : Date.now() - state.entryAt[id] > (run ? RUN_HOLD : kind === 'surv' ? SURV_HOLD : dip ? P.dipHold : P.maxHold || Infinity) ? `time ${p}`
       : status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}`
       : recentlyDied(h.name, state.entryAt[id] - 60e3) || hpOf(h.name)?.alive === false ? `died ${p}`
       : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
@@ -372,8 +375,8 @@ async function scan() {
   // another strategy; on the tape the crash result is the same at 5, 10 and 30 min (n=15).
   // A 5 s scan was tested too and lost (sum +39% vs +56% at 15 s, first half): it buys mid-fall, before the low.
   const dips = crashOn() ? cooled(CRASH_COOLDOWN)
-    .map((s) => { const p = prevScan[s.external_id], p3 = priceSince(s.external_id, now - 3 * 60e3); return { s, ret: p && p3 && p.price / p3 - 1 < CRASH_FLAT ? s.last_price_cents / p.price - 1 : 0 }; })
-    .filter((c) => c.ret <= -CRASH_DROP)
+    .map((s) => { const p = prevScan[s.external_id], p3 = priceSince(s.external_id, now - 3 * 60e3); return { s, ret: p && p3 && p.price / p3 - 1 < P.crashFlat ? s.last_price_cents / p.price - 1 : 0 }; })
+    .filter((c) => c.ret <= -P.crashDrop)
     .sort((a, b) => a.ret - b.ret) : [];
   if (dips.length) {
     const cash = (await api('cx-bucks/balance')).j?.balance_cents ?? 0;
@@ -438,10 +441,14 @@ async function retune() {
   if (tape.length < 500) return log({ ev: 'tune_skip', trades: tape.length });
   const { cur, best, adopt } = tune(tape, P);
   log({ ev: 'tune', trades: tape.length, cur, best: { ...best.r, P: best.P }, adopted: !!adopt });
-  if (!adopt) return;
-  P = { ...P, ...adopt }; // keep params the grid does not cover (dumpExit)
+  // crash rebound + run mode: same walk-forward idea, adopted only if positive in both halves of the window
+  const c = tuneCrash(tape, P);
+  log({ ev: 'tune_crash', cur: c.cur, best: c.best && { ...c.best.r, Q: c.best.Q }, adopted: !!c.adopt });
+  if (!adopt && !c.adopt) return;
+  P = { ...P, ...adopt, ...c.adopt }; // keep params the grids do not cover (dumpExit)
   fs.writeFileSync(PARAMS, JSON.stringify(P));
-  notify(`new params ${JSON.stringify(P)} (6h backtest: ${cur.pnl} -> ${best.r.pnl})`);
+  paramsMtime = fs.statSync(PARAMS).mtimeMs; // our own write, not an edit to reload
+  notify(`new params ${JSON.stringify(P)} (6h backtest: momentum ${cur.pnl} -> ${best.r.pnl}, crash ${c.cur.total.toFixed(2)} -> ${c.best?.r.total.toFixed(2)})`);
 }
 
 async function daily() {
@@ -468,5 +475,6 @@ loop(scan, SCAN_EVERY);
 loop(readMap, 10e3);
 loop(record, RECORD_EVERY);
 loop(retune, TUNE_EVERY);
+retune().catch((e) => log({ ev: 'err', fn: 'retune', msg: e.message })); // tune at start too, not 2 h later
 loop(daily, 24 * 3600e3);
 loop(reloadParams, 30e3);

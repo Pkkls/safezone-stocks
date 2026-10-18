@@ -2,7 +2,7 @@
 // refuse to adopt params that do not clearly beat the current ones. node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth } from './backtest.mjs';
+import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 const ref = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -84,5 +84,19 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.strictEqual(sortCookies(list).ice.length, 0, 'control: no SITE_HOST, no site cookie kept');
   assert.strictEqual(setEnv('A=1\nKICK_BEARER=old\n', 'KICK_BEARER', 'new'), 'A=1\nKICK_BEARER=new\n');
   assert.throws(() => sortCookies({}), /JSON array/);
+}
+// crash simulator: a flat stock crashing -40% in one trade then rebounding is one winning trade; the same tape
+// without the crash trades nothing; the tuner never adopts from a single trade
+{
+  const t = 1e12, row = (dt, pb, pa) => ({ e: 'x', t: t + dt, pb, pa, s: pa < pb ? 's' : 'b' });
+  const flat = [row(0, 1000, 1000), row(200e3, 1000, 1000)];
+  // 600 -> 1000 starts run mode, 840 < 1000 * 0.85 closes it: entry 600, exit 840
+  const crashTape = [...flat, row(210e3, 1000, 600), row(400e3, 600, 1000), row(1000e3, 1000, 840), row(2000e3, 840, 840)];
+  const Q = { crashDrop: 0.25, crashFlat: 0.1, dipHold: 600e3, runStart: 1.1, runTrail: 0.85 };
+  const r = simulateCrash(prepare(crashTape), Q);
+  assert.strictEqual(r.n, 1, 'crash not traded');
+  assert.ok(r.total > 0.2, 'crash rebound should be a clear win');
+  assert.strictEqual(simulateCrash(prepare([...flat, row(210e3, 1000, 1000), row(2000e3, 1000, 1000)]), Q).n, 0, 'control: no crash, no trade');
+  assert.strictEqual(tuneCrash(crashTape, Q).adopt, null, 'one trade must never be enough to adopt');
 }
 console.log('check ok');

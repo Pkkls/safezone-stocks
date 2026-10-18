@@ -124,6 +124,52 @@ export function simulate({ paths, t0, t1 }, P) {
   return { pnl: Math.round(value - 50000), n, wins };
 }
 
+// Crash rebound + run mode, as the engine trades it: a drop >= crashDrop between two 15 s scans with less than
+// crashFlat of rise over the 3 min before, bought 3 s later; sold after dipHold, unless the peak reaches runStart x
+// entry, then a runTrail trailing stop from the peak, capped at 2 h. Returns per-trade net returns (fees + own impact)
+// split into the two halves of the window, so tuning can demand a result that holds in both.
+export function simulateCrash({ paths, t0, t1 }, Q) {
+  const { crashDrop, crashFlat, dipHold, runStart, runTrail } = Q;
+  const net = (pe, px) => px / pe * (1 - FEE) ** 2 * (1 - 1e4 / (R0 * Math.sqrt(pe / 1000))) * (1 - 1e4 / (R0 * Math.sqrt(px / 1000))) - 1;
+  const tm = (t0 + t1) / 2, halves = [[], []];
+  for (const p of Object.values(paths)) {
+    let free = -Infinity;
+    for (let t = t0 + 180e3; t <= t1; t += STEP / 2) {
+      if (t < free) continue;
+      const now = priceAt(p, t), prev = priceAt(p, t - 15e3), p3 = priceAt(p, t - 180e3);
+      if (!now || !prev || !p3 || now / prev - 1 > -crashDrop || prev / p3 - 1 >= crashFlat) continue;
+      const pe = priceAt(p, t + 3e3);
+      let pk = pe, run = false, px = null, u;
+      for (u = t + 3e3; u <= t1; u += 5e3) {
+        const x = priceAt(p, u); pk = Math.max(pk, x);
+        if (pk >= pe * runStart) run = true;
+        if ((!run && u - t >= dipHold) || (run && (x < pk * runTrail || u - t >= 2 * 3600e3))) { px = x; break; }
+      }
+      if (px === null) break; // still open at the end of the tape: not counted
+      halves[t < tm ? 0 : 1].push(net(pe, px));
+      free = u + 5 * 60e3; // crash cooldown
+    }
+  }
+  const sum = (v) => v.reduce((a, b) => a + b, 0);
+  return { n: halves[0].length + halves[1].length, h1: sum(halves[0]), h2: sum(halves[1]), total: sum(halves[0]) + sum(halves[1]) };
+}
+
+export const CRASH_GRID = [];
+for (const crashDrop of [0.2, 0.25, 0.3]) for (const crashFlat of [0.05, 0.1, 0.2]) for (const dipHold of [5, 10, 20])
+  for (const runStart of [1.1, 1.2]) for (const runTrail of [0.8, 0.85, 0.9])
+    CRASH_GRID.push({ crashDrop, crashFlat, dipHold: dipHold * 60e3, runStart, runTrail });
+
+// Adopt a crash/run param set only if: >= minTrades trades, positive in BOTH halves, and beats the current set's
+// total by max(0.10, 20%) (sums of per-trade returns, so 0.10 = +10 points over the window).
+export function tuneCrash(tape, current, minTrades = 8) {
+  const d = prepare(tape);
+  const cur = simulateCrash(d, current);
+  let best = null;
+  for (const Q of CRASH_GRID) { const r = simulateCrash(d, Q); if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q, r }; }
+  const ok = best && best.r.total > cur.total + Math.max(0.10, Math.abs(cur.total) * 0.2);
+  return { cur, best, adopt: ok ? best.Q : null };
+}
+
 export const GRID = [];
 for (const lookback of [2, 5]) for (const entryMin of [0.05, 0.15, 0.3]) for (const entryMax of [0.6, 99])
   for (const trail of [0.7, 0.8, 0.9]) for (const maxHold of [0, 10, 30]) for (const minBreadth of [0, 0.4, 0.6])

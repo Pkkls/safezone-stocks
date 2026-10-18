@@ -67,8 +67,13 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
 - At most 6 positions, with a 30 min cooldown before re-entering a stock.
 - Positions you open yourself are managed too, but never on a timer: 15% trailing stop, plus the death, low-health
   and dump exits. When you hold the same stock as the engine, it only sells its own shares.
-- Every 2 hours it re-runs the momentum backtest on the last 6 hours and adopts new parameters only if they beat the
-  current ones by a clear margin over at least 10 trades.
+- **Self-tuning**, at start and every 2 hours, on the last 6 hours of tape:
+  - momentum: adopts new parameters only if they beat the current ones by a clear margin over at least 10 trades;
+  - crash rebound and run mode (`crashDrop`, `crashFlat`, `dipHold`, `runStart`, `runTrail`): 162 combinations
+    replayed exactly as traded, adopted only with at least 8 trades, a profit in both halves of the window, and a
+    clear margin over the current set.
+
+  Picking the best of many combinations on a small sample overfits. The kill switches are the safety net.
 - `params.json` is hot-reloaded every 30 s: edit it instead of restarting. A restart costs about a minute, which is
   enough to miss a signal.
 
