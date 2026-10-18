@@ -66,6 +66,9 @@ export function prepare(tape) {
   const paths = {};
   for (const r of tape) {
     const p = (paths[r.e] ||= { ts: [], pa: [], pb0: r.pb, dumps: [] });
+    // death: the server's -20% knock between two trades (no trade of its own), 30 s to 2 min after the grave
+    const gap = p.pa.length ? r.pb / p.pa.at(-1) - 1 : 0;
+    if (gap < -0.15 && gap > -0.25 && r.t - p.ts.at(-1) > 20e3) p.deathAt ??= r.t;
     p.ts.push(r.t); p.pa.push(r.pa);
     if (r.s === 's' && (r.pb - r.pa) / r.pb >= DUMP_DROP) p.dumps.push(r.t);
   }
@@ -210,6 +213,56 @@ export function tuneSurv(tape, current, deaths, names, minTrades = 8) {
   }
   if (best && best.r.total > cur.total + Math.max(0.10, Math.abs(cur.total) * 0.2)) return { cur, best, adopt: best.Q };
   if (!best && current.survTop > 0 && cur.n >= minTrades && cur.total < 0) return { cur, best, adopt: { survTop: 0 } };
+  return { cur, best, adopt: null };
+}
+
+// Top basket, as traded: every topReb, hold the topN highest-priced live stocks (traded in the last 30 min, no death
+// yet), buying min(topSize x cash, 1.5% of the pool reserve); sell one when its rank reaches topExit, or at its death
+// knock (worst case: after the -20%). Fees and own impact both ways. Returns Cx PnL of the window and of each half
+// (two separate runs), n = buys over the window. Starts from 866 Cx (the 18/10 balance).
+export function simulateTop({ paths, t0, t1 }, Q) {
+  const { topN, topExit, topReb, topSize = 0.15 } = Q;
+  const run = (from, to) => {
+    let cash = 86580, n = 0; const pos = {};
+    const imp = (p, c) => c / (R0 * Math.sqrt(p / 1000));
+    const sell = (id, px) => { const v = pos[id] * px; cash += v * (1 - FEE) * (1 - imp(px, v)); delete pos[id]; };
+    for (let t = from; t <= to && topN > 0; t += 60e3) {
+      for (const id of Object.keys(pos)) if (paths[id].deathAt <= t) sell(id, priceAt(paths[id], t));
+      if ((t - from) % topReb) continue;
+      const ranked = Object.entries(paths).filter(([, p]) => !(p.deathAt <= t) && (p.ts.findLast((x) => x <= t) ?? 0) > t - 30 * 60e3)
+        .map(([id, p]) => ({ id, now: priceAt(p, t) })).sort((a, b) => b.now - a.now);
+      const rank = new Map(ranked.map((x, i) => [x.id, i]));
+      for (const id of Object.keys(pos)) if (!(rank.get(id) < topExit)) sell(id, priceAt(paths[id], t));
+      for (const x of ranked.slice(0, topN)) {
+        if (pos[x.id]) continue;
+        const c = Math.min(cash * topSize, R0 * Math.sqrt(x.now / 1000) * 0.015);
+        if (c < 1000) break;
+        cash -= c; n++; pos[x.id] = c * (1 - FEE) * (1 - imp(x.now, c)) / x.now;
+      }
+    }
+    let v = cash;
+    for (const [id, sh] of Object.entries(pos)) { const px = priceAt(paths[id], to); v += sh * px * (1 - FEE) * (1 - imp(px, sh * px)); }
+    return { pnl: (v - 86580) / 100, n };
+  };
+  const from = t0 + 3600e3, mid = (from + t1) / 2; // first hour skipped: "traded in the last 30 min" needs history
+  if (from >= t1) return { n: 0, h1: 0, h2: 0, total: 0 };
+  const all = run(from, t1);
+  return { n: all.n, h1: run(from, mid).pnl, h2: run(mid, t1).pnl, total: all.pnl };
+}
+
+// Same rules as tuneSurv, in Cx: adopt a setting positive in both halves that beats the current one by
+// max(10 Cx, 20%); switch the basket off (topN 0) when the current one loses and no setting wins in both halves.
+export function tuneTop(tape, current, minTrades = 8) {
+  const d = prepare(tape);
+  const cur = simulateTop(d, current);
+  let best = null;
+  for (const topN of [3, 5, 10]) for (const topReb of [15, 60]) {
+    const Q = { topN, topExit: 2 * topN, topReb: topReb * 60e3, topSize: current.topSize };
+    const r = simulateTop(d, Q);
+    if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q: { topN, topExit: Q.topExit, topReb: Q.topReb }, r };
+  }
+  if (best && best.r.total > cur.total + Math.max(10, Math.abs(cur.total) * 0.2)) return { cur, best, adopt: best.Q };
+  if (!best && current.topN > 0 && cur.n >= minTrades && cur.total < 0) return { cur, best, adopt: { topN: 0 } };
   return { cur, best, adopt: null };
 }
 

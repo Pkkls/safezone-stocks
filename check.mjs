@@ -2,7 +2,7 @@
 // refuse to adopt params that do not clearly beat the current ones. node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck } from './backtest.mjs';
+import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 const ref = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -122,6 +122,22 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.deepStrictEqual(trialTally(lines, 'crash'), { n: 1, pnl: -500 }, 'tally counts only the crash round trip');
   const rearmed = [...lines, JSON.stringify({ ev: 'crash_on' }), tr('buy', 'C', 'crash -40%', 1000), tr('sell', 'C', 'time', 1200)];
   assert.deepStrictEqual(trialTally(rearmed, 'crash'), { n: 1, pnl: 200 }, 'control: trips before crash_on must be forgotten');
+}
+// top basket: holds the highest-priced live stock; a rise wins, a fall loses, a death knock is sold and never rebought
+{
+  const t = 1e12, row = (e, dt, pb, pa) => ({ e, t: t + dt, pb, pa, s: 'b' });
+  const mk = (f) => { const v = []; for (let k = 0; k <= 400; k++) v.push(row('a', k * 30e3, f(k), f(k)), row('b', k * 30e3 + 1, 1000, 1000)); return v; };
+  const Q = { topN: 1, topExit: 1, topReb: 15 * 60e3, topSize: 0.15 };
+  const up = simulateTop(prepare(mk((k) => 2000 + k * 5)), Q);
+  assert.ok(up.n === 1 && up.total > 0, 'rising top stock: one buy, a win');
+  assert.ok(simulateTop(prepare(mk((k) => 2000 - k * 2)), Q).total < 0, 'control: falling top stock loses');
+  assert.strictEqual(simulateTop(prepare(mk((k) => 2000 + k * 5)), { ...Q, topN: 0 }).n, 0, 'control: topN 0 trades nothing');
+  // death knock: a -20% gap after 5 min without trades; the basket sells and then buys 'b', never 'a' again
+  const dead = mk((k) => 2000).filter((r) => r.e !== 'a' || r.t < t + 200 * 30e3 || r.t >= t + 210 * 30e3).map((r) => r.e === 'a' && r.t >= t + 210 * 30e3 ? { ...r, pb: 1600, pa: 1600 } : r);
+  const r = simulateTop(prepare(dead), Q);
+  assert.strictEqual(r.n, 2, 'after the death knock: sold a, bought b, a never again');
+  assert.ok(r.total < 0, 'the death knock costs about 20% of the position');
+  assert.deepStrictEqual(tuneTop(mk((k) => 2000 + k * 5), Q).adopt, null, 'one buy must never be enough to adopt');
 }
 // watchdog: stale after 5 min without success, never during an API block; lost after 3 min of 401
 {

@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork } from 'node:child_process';
-import { tune, tuneCrash, tuneSurv, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck } from './backtest.mjs';
+import { tune, tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST; // event site domain, e.g. example.com (api.<host>, event-public.<host>)
@@ -42,7 +42,9 @@ const DEFAULTS = { lookback: 2 * 60e3, entryMin: 0.15, entryMax: 99, trail: 0.80
   survTop: 2, survHold: 30 * 60e3,
   // rebound/survivor size cap as a share of the pool's cash reserve (see sizeCap). 18/10 tape (6.4 h, 17 crash
   // entries, own impact both ways): 0.0075 +160 Cx, 0.015 +248, 0.02 +267 but worst trade -192, 0.05 loses
-  maxImpact: 0.015 };
+  maxImpact: 0.015,
+  // top basket (see scan), self-tuned through tuneTop (topN 0 = off)
+  topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15 };
 const PARAMS = 'params.json';
 let P = { ...DEFAULTS, ...readJson(PARAMS) };
 const MIN_BUY = 1000;          // 10.00 minimum per entry
@@ -138,7 +140,9 @@ const H = { origin: SITE, referer: `${SITE}/` };
 // steady load is ~0.7 req/s. Blocked/429 stops every call, backing off 2 -> 30 min.
 const MIN_GAP = 400;
 let queue = Promise.resolve(), blockedUntil = 0, backoff = 0;
-const isBlocked = (r) => r.s === 429 || (r.s === 403 && r.j?.error === 'Blocked');
+// 429 RATELIMITED is the per-account order throttle ("Too many trades, try again in 4s.", 18/10 03:14, 3rd order in
+// 1.6 s), not an IP block: treating it as one blinded the engine for 2 min. The order just fails; the next tick retries.
+const isBlocked = (r) => (r.s === 429 && r.j?.error !== 'RATELIMITED') || (r.s === 403 && r.j?.error === 'Blocked');
 function api(path, body) {
   const run = queue.then(async () => {
     if (Date.now() < blockedUntil) return { s: 0, j: null, blocked: true };
@@ -297,35 +301,40 @@ async function guard() {
     state.peak[id] = Math.max(state.peak[id] || 0, p);
     const kind = state.kind?.[id];
     const dip = kind === 'dip' || kind === 'surv'; // exit on time/death only: no trail or dump exit (the backtests held plain)
+    const top = kind === 'top'; // basket: sold by the rebalance (rank) or the status/death/hp exits, never on time or trail
     // ...unless the rebound turned into a run (peak >= +10% over entry, 18/10: do not exit too early): then ride it
     // with a 15% trail from the peak instead of selling at 10 min, capped at RUN_HOLD.
     const run = dip && state.peak[id] >= entryPx(h) * P.runStart;
     const why = run && p < state.peak[id] * P.runTrail ? `runtrail ${p}<${Math.round(state.peak[id] * P.runTrail)}`
-      : !dip && p < state.peak[id] * P.trail ? `trail ${p}<${Math.round(state.peak[id] * P.trail)}`
-      : Date.now() - state.entryAt[id] > (run ? RUN_HOLD : kind === 'surv' ? P.survHold : dip ? P.dipHold : P.maxHold || Infinity) ? `time ${p}`
+      : !dip && !top && p < state.peak[id] * P.trail ? `trail ${p}<${Math.round(state.peak[id] * P.trail)}`
+      : !top && Date.now() - state.entryAt[id] > (run ? RUN_HOLD : kind === 'surv' ? P.survHold : dip ? P.dipHold : P.maxHold || Infinity) ? `time ${p}`
       : status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}`
       : recentlyDied(h.name, state.entryAt[id] - 60e3) || hpOf(h.name)?.alive === false ? `died ${p}`
       : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
       : eliminated[id] ? `eliminated ${p}`
       // trades are only fetched when the price just fell >= DUMP_DROP vs the previous tick (keeps the call budget low)
-      : !dip && P.dumpExit && lastBreadth !== null && lastBreadth < (P.dumpBreadth ?? 0) && p <= (lastPrice[id] ?? p) * (1 - DUMP_DROP)
+      : !dip && !top && P.dumpExit && lastBreadth !== null && lastBreadth < (P.dumpBreadth ?? 0) && p <= (lastPrice[id] ?? p) * (1 - DUMP_DROP)
         && await dumped(h, Math.max(state.entryAt[id], Date.now() - 60e3)) ? `dump ${p}`
       : null;
     lastPrice[id] = p;
-    if (why) {
-      // sell only the engine's own shares: the operator may hold the same stock on this account
-      const own = state.shares[id] ? (BigInt(state.shares[id]) < BigInt(h.shares) ? state.shares[id] : h.shares) : h.shares;
-      const t = await trade('stock-market/sell', h, { shares: own }, why);
-      if (t?.s === 200) {
-        delete state.peak[id]; delete state.entryAt[id]; delete state.kind[id]; state.exitedAt[id] = Date.now();
-        me.holdings = me.holdings.filter((x) => x.external_id !== id); // cached copy must not re-sell it
-      }
-    }
+    if (why) await sellOwn(h, why);
   }
   save();
 }
 
+// sell only the engine's own shares: the operator may hold the same stock on this account
+async function sellOwn(h, why) {
+  const id = h.external_id;
+  const own = state.shares[id] ? (BigInt(state.shares[id]) < BigInt(h.shares) ? state.shares[id] : h.shares) : h.shares;
+  const t = await trade('stock-market/sell', h, { shares: own }, why);
+  if (t?.s === 200) {
+    delete state.peak[id]; delete state.entryAt[id]; delete state.kind[id]; state.exitedAt[id] = Date.now();
+    me.holdings = me.holdings.filter((x) => x.external_id !== id); // cached copy must not re-sell it
+  }
+}
+
 const lastKnown = {}; let firstPageTotal = null; // settlement tracking (see scan)
+let lastReb = 0; // last top-basket rebalance: 0 rebalances on the first scan after a start
 async function scan() {
   const now = Date.now(), stocks = [], since = now - Math.max(P.lookback, BREADTH_WINDOW), spark = {};
   for (let page = 1; page <= 3; page++) {
@@ -364,7 +373,38 @@ async function scan() {
   const breadth = breadthOf(active.filter((s) => s.last_trade_at && !s.eliminated_at).map((s) => [s.last_price_cents, priceSince(s.external_id, now - BREADTH_WINDOW) ?? s.last_price_cents]));
   if (active.length) lastBreadth = breadth;
   log({ ev: 'scan', breadth: +breadth.toFixed(2), stocks: stocks.length });
-  if (!me || !me.trading_enabled || me.holdings.length >= MAX_POS) return;
+  if (!me || !me.trading_enabled) return;
+  // Top basket (18/10): hold the topN highest-priced live stocks, sell one when its rank reaches topExit (deaths: guard).
+  // Tape 21:02-03:05, from 866 Cx: top 10 / exit at rank 20 / hourly +404 Cx (halves +111, +212, 14 buys), top 5 +267,
+  // top 3 +262, every 15 min +380. One stock made +191 of it and the sample is one evening: self-tuned on 24 h and
+  // kill-switched like the others. Buys skip the cooldown (a stock sold at rank 20 is rarely back in the top 10).
+  // Rank exits run every topReb; a missing top stock is bought at once, one order per scan (the order throttle allows
+  // ~2 per 2 s), which trades like the 15-min rebalance of the replay (+380 Cx).
+  if (P.topN > 0) {
+    const ranked = active.filter((s) => !s.eliminated_at && !diedAt[s.name.toLowerCase()] && !risky(s.name) && s.last_trade_at && now - Date.parse(s.last_trade_at) < 30 * 60e3)
+      .sort((a, b) => b.last_price_cents - a.last_price_cents);
+    const rank = new Map(ranked.map((s, i) => [s.external_id, i]));
+    if (now - lastReb >= P.topReb) {
+      lastReb = now;
+      for (const h of me.holdings.filter((x) => state.kind[x.external_id] === 'top' && !(rank.get(x.external_id) < P.topExit))) await sellOwn(h, `toprank ${rank.get(h.external_id) ?? 'out'} ${h.last_price_cents}`);
+    }
+    const mine = new Set(me.holdings.map((h) => h.external_id));
+    const s = ranked.slice(0, P.topN).find((x) => !mine.has(x.external_id));
+    if (s && trialOn('top')) {
+      const cash = (await api('cx-bucks/balance')).j?.balance_cents ?? 0;
+      const amt = Math.min(Math.floor(cash * P.topSize), sizeCap(s.last_price_cents));
+      if (amt >= MIN_BUY && amt <= cash) {
+        const t = await trade('stock-market/buy', s, { cash_cents: amt }, `top #${rank.get(s.external_id) + 1} @${s.last_price_cents}`);
+        if (t?.s === 200) {
+          state.peak[s.external_id] = s.last_price_cents; state.entryAt[s.external_id] = Date.now(); state.kind[s.external_id] = 'top'; save();
+          me.holdings.push({ external_id: s.external_id, name: s.name, shares: t.j.shares, last_price_cents: s.last_price_cents }); // until the next /me
+          return; // one order per scan
+        }
+      }
+    }
+  }
+  // MAX_POS bounds the other strategies; the basket has its own bound (topN)
+  if (me.holdings.filter((h) => state.kind[h.external_id] !== 'top').length >= MAX_POS) return;
   const held = new Set(me.holdings.map((h) => h.external_id));
   const live = active
     .filter((s) => !held.has(s.external_id))
@@ -484,10 +524,13 @@ async function retune() {
     log({ ev: `${prefix}_on`, ...r });
     notify(`strategy ${prefix} switched back on: replay ${r.n} trades, ${r.total.toFixed(2)}`);
   };
+  const tp = tuneTop(long, P);
+  log({ ev: 'tune_top', cur: tp.cur, best: tp.best && { ...tp.best.r, Q: tp.best.Q }, adopt: tp.adopt });
   rearm('crash', c.adopt ? c.best.r : c.cur);
   rearm('surv', sv.adopt?.survTop ? sv.best.r : sv.cur);
-  if (!adopt && !c.adopt && !sv.adopt) return;
-  P = { ...P, ...adopt, ...c.adopt, ...sv.adopt }; // keep params the grids do not cover (dumpExit)
+  rearm('top', tp.adopt?.topN ? tp.best.r : tp.cur);
+  if (!adopt && !c.adopt && !sv.adopt && !tp.adopt) return;
+  P = { ...P, ...adopt, ...c.adopt, ...sv.adopt, ...tp.adopt }; // keep params the grids do not cover (dumpExit)
   fs.writeFileSync(PARAMS, JSON.stringify(P));
   paramsMtime = fs.statSync(PARAMS).mtimeMs; // our own write, not an edit to reload
   notify(`new params ${JSON.stringify(P)} (6h backtest: momentum ${cur.pnl} -> ${best.r.pnl}, crash ${c.cur.total.toFixed(2)} -> ${c.best?.r.total.toFixed(2)}, survivors ${JSON.stringify(sv.adopt)})`);

@@ -49,6 +49,11 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
 | `crash` | a stock drops 25% or more between two scans (15 s) with no pump in the 3 min before; 5 min cooldown after any exit on that stock (30 min for the other strategies) | after 10 min |
 | `surv` | 20 s after a new death, buy the 2 highest-priced live contestants | after 30 min |
 | `mom` | momentum, only while at least 60% of the market is rising together | 20% trail or 10 min |
+| `top` | every hour, hold the 10 highest-priced live contestants (traded in the last 30 min), 15% of cash each, capped at 1.5% of the pool reserve | when the rank reaches 20, or death |
+
+`top` is the only steady earner measured so far: on the 18/10 evening tape (21:00 to 03:00 UTC, deaths sold at the
+knocked-down price) it made +404 Cx from 866, positive in both halves, in 14 buys. Frequent entries (dips of 10 to
+20%, dips in an uptrend, breakouts) all lost 2 to 10% per trade after fees on the same tape.
 
 **Exits that apply on top**:
 
@@ -77,7 +82,8 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
     replayed exactly as traded, adopted only with at least 8 trades, a profit in both halves of the window, and a
     clear margin over the current set;
   - survivors (`survTop`, `survHold`): replayed on the logged deaths. With no setting profitable in both halves and
-    a losing current one, it sets `survTop` to 0 (strategy off), and switches it back on when a setting wins again.
+    a losing current one, it sets `survTop` to 0 (strategy off), and switches it back on when a setting wins again;
+  - top basket (`topN`, `topExit`, `topReb`): same rule in Cx, `topN` 0 is off.
 
   Picking the best of many combinations on a small sample overfits. The kill switches are the safety net.
 - `params.json` is hot-reloaded every 30 s: edit it instead of restarting. A restart costs about a minute, which is
