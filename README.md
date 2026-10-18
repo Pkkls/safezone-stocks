@@ -78,8 +78,7 @@ after `END_AT`.
 
 ### Live stream (no browser)
 
-The engine pushes a text dashboard over ssh every 10 s, rotating 4 pages every 20 s (portfolio; last orders and PnL per
-strategy; 5-min movers and price ranking; contestants in danger and last deaths) plus a ticker line. ffmpeg frames
+The engine pushes a text dashboard over ssh every 10 s, rotating 5 pages every 20 s, plus a ticker line. ffmpeg frames
 them with an ASCII "CX" banner, a blinking LIVE tag, a dancing ASCII mascot (`stream/dance1-4.txt`, 4 poses a second)
 and the scrolling ticker; `stream/run.sh` on a server has ffmpeg draw it
 (`drawtext`), encode it and send it to the RTMP(S) ingest, restarting after any drop. Measured on a 1 GB VPS: 7% of a
@@ -88,6 +87,31 @@ core and 94 MB at 1280x720, 5 fps.
 1. Server (ffmpeg + DejaVu fonts): copy `stream/run.sh` to `~/szdash/`, put the ingest URL and stream key in
    `~/szdash/url` (`chmod 600`), run `nohup sh ~/szdash/run.sh >/dev/null 2>&1 &` and add it as a crontab `@reboot`.
 2. PC: `STREAM_SSH` (ssh host alias) in `.env`, plus `STREAM_SSH_BIN` if `ssh` is not on PATH. Restart the engine.
+
+| Page | Shows |
+|---|---|
+| 1/5 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and % |
+| 2/5 ACTIVITY | last 14 orders (buy / sell), and per strategy: closed round trips, winners, PnL |
+| 3/5 MARKET | 8 biggest 5-min rises and falls, share of the market rising, the 18 most expensive stocks |
+| 4/5 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths with what killed them |
+| 5/5 STATUS | the 34 weakest alive contestants: HP bar, HP, sigil, and the S P D O L flags below |
+
+Colors (one drawtext layer each, aligned on the same character grid): **green** gain, buy, HP over 70%, live;
+**red** loss, sell, HP under 35%, death, poison, drone, outside the zone; **yellow** HP 35 to 70%, shield; **cyan**
+titles; **white** everything else.
+
+Contestant status, decoded from the map's health frame and roster (never their positions):
+
+| Field | Meaning |
+|---|---|
+| HP / max | hit points; max differs by contestant (90, 100, 110) |
+| sigil | the contestant's class in the game: piety, healing, protection, endurance, greed, trolling, necromancy... |
+| S shield | armor badge: kick shield (bought with Kicks) or faith shield |
+| P poisoned | poison ticking (from a poison dart) |
+| D drone | a drone strike is incoming |
+| O outside | outside the safe zone: loses HP until back in |
+| L live | streaming on Kick right now |
+| deaths | what killed them: zone, knife, drone, zombie_leech... |
 
 A frozen "data HH:MM:SS UTC" on the stream means the PC stopped pushing. `stream/check.sh <env file with TG_TOKEN and
 TG_CHAT>`, run every 5 min from cron on the server, sends one Telegram message when the text is over 5 min old (engine

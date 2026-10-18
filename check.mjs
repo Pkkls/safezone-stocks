@@ -1,6 +1,6 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamPages, streamTicker, roundTrips } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -18,12 +18,14 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   const frame = (kind, recs) => {
     const n = recs.length, b = Buffer.alloc(48 + n * 28), v = new DataView(b.buffer);
     v.setUint8(0, kind); v.setUint16(32, n, true);
-    recs.forEach(([slot, status, flags, hp, max], i) => { v.setUint16(48 + i * 2, slot, true); v.setUint8(48 + n * 2 + i, status); v.setUint16(48 + n * 4 + i * 2, flags, true); v.setUint8(48 + n * 6 + i, hp); v.setUint8(48 + n * 7 + i, max); });
+    recs.forEach(([slot, status, flags, hp, max, badges = 0], i) => { v.setUint16(48 + i * 2, slot, true); v.setUint8(48 + n * 2 + i, status); v.setUint8(48 + n * 3 + i, badges); v.setUint16(48 + n * 4 + i * 2, flags, true); v.setUint8(48 + n * 6 + i, hp); v.setUint8(48 + n * 7 + i, max); });
     return { binary: b.toString('base64') };
   };
-  const text = { text: JSON.stringify({ type: 'contestants', data: { slots: { slots: [{ slot: 0, username: 'Aa' }, { slot: 1, username: 'Bb' }] } } }) };
-  const h = decodeHealth([text, frame(2, [[0, 2, 1, 90, 100], [1, 3, 9, 50, 110]]), frame(2, [[0, 2, 0, 0, 100]]), frame(1, [[1, 2, 1, 7, 100]])]);
-  assert.deepStrictEqual(h, { aa: { hp: 0, max: 100, alive: false, out: false }, bb: { hp: 50, max: 110, alive: true, out: true } }, 'health decode');
+  const text = { text: JSON.stringify({ type: 'contestants', data: { slots: { slots: [{ slot: 0, username: 'Aa' }, { slot: 1, username: 'Bb' }, { slot: 2, username: 'Cc' }] } } }) };
+  const h = decodeHealth([text, frame(2, [[0, 2, 1, 90, 100], [1, 3, 9, 50, 110], [2, 2, 1 | 2 | 4, 70, 100, 1]]), frame(2, [[0, 2, 0, 0, 100]]), frame(1, [[1, 2, 1, 7, 100]])]);
+  const base = { poison: false, drone: false, shield: '' };
+  assert.deepStrictEqual(h, { aa: { hp: 0, max: 100, alive: false, out: false, ...base }, bb: { hp: 50, max: 110, alive: true, out: true, ...base },
+    cc: { hp: 70, max: 100, alive: true, out: false, poison: true, drone: true, shield: 'kick' } }, 'health decode, with shield, poison and drone');
   assert.deepStrictEqual(decodeHealth([frame(2, [[0, 2, 1, 90, 100]])]), {}, 'control: no contestants frame, no names');
 }
 // cookie import: keep only kick session_token (URL-decoded) and the site's token cookies; fake values only
@@ -105,20 +107,28 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.deepStrictEqual(stuck(t + 4 * m, t + 4 * m, 0, t), { stale: false, lost: true }, 'lost session not detected');
   assert.deepStrictEqual(stuck(t + 2 * m, t + 2 * m, 0, t), { stale: false, lost: false }, 'control: 2 min of 401 is tolerated');
 }
-// stream pages: 4 pages of at most 96 x 22, each with its content; positions sorted by value, yours labelled
+// stream pages: 5 pages of at most 96 x 22, color layers on one grid, each with its content; positions sorted by value, yours labelled
 {
   const me = { realized_pnl_cents: 50580, unrealized_pnl_cents: -120, holdings: [
     { external_id: 'a', name: 'Small', cost_basis_cents: 1000, current_value_cents: 900 },
     { external_id: 'b', name: 'Big', cost_basis_cents: 2000, current_value_cents: 2500 }],
     trades: [{ occurred_at: '2026-10-18T04:29:15Z', side: 'buy', external_id: 'b', cash_cents: 2000 }] };
-  const P = streamPages({ me, names: { b: 'Big' }, health: { x: { alive: true, hp: 20, max: 100, out: false }, y: { alive: false, hp: 0, max: 100 }, z: { alive: true, hp: 90, max: 100, out: false } },
+  const raw = streamPages({ me, names: { b: 'Big' }, health: { x: { alive: true, hp: 20, max: 100, out: false }, y: { alive: false, hp: 0, max: 100 }, z: { alive: true, hp: 90, max: 100, out: false, shield: 'kick' } },
+    roster: { z: { sigil: 'healing', live: true } },
     breadth: 0.13, startedAt: 0, now: 3 * 3600e3 + 5 * 60e3, kindOf: (id) => (id === 'b' ? 'crash' : ''),
     deaths: [{ u: 'old', t: 1e12, cause: 'damage', source: 'zone' }, { u: 'newest', t: 2e12, cause: 'damage', source: 'knife' }],
     movers: [{ name: 'Up', ret: 0.2 }, { name: 'Down', ret: -0.1 }], ranking: [{ name: 'Top', price: 9000 }, { name: 'Next', price: 5000 }],
     strategies: { top: { n: 3, win: 2, pnl: 1500 } } });
-  assert.strictEqual(P.length, 4);
-  for (const p of P) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 96), 'page fits 96 x 22: ' + l[0]); }
-  assert.match(P[0], /^1\/4 {2}PORTFOLIO[\s\S]*Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Alive 2 {3}Bot up 3h05/);
+  const Lay = raw.map(layers), plain = raw.map((p) => p.replace(/\x01.|\x02/g, '')), P = plain; // plain: what a viewer reads
+  assert.strictEqual(raw.length, 5);
+  for (const p of plain) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 96), 'page fits 96 x 22: ' + l[0]); }
+  for (const [i, L] of Lay.entries()) for (const k of ['g', 'r', 'y', 'c']) assert.deepStrictEqual(L[k].split('\n').map((x) => x.length), L.w.split('\n').map((x) => x.length), `layer ${k} of page ${i + 1} on the same grid`);
+  assert.match(Lay[0].g, /\n {49}\+5\.00 +\+25\.0%/, 'a gain is drawn in green, at its column');
+  assert.match(Lay[0].r, /\n {49}-1\.00 +-10\.0%/, 'a loss is drawn in red');
+  assert.doesNotMatch(Lay[0].g, /-1\.00/, 'control: a loss is never green');
+  assert.match(plain[4], /5\/5 {2}STATUS[\s\S]*\nx +##-{8} +20 - +\.\.\.\.\.[\s\S]*\nz +#{9}- +90 healing +S\.\.\.L/, 'status: weakest first, hp bar, sigil, shield and live flags');
+  assert.match(Lay[4].y, /S/, 'a shield is drawn in yellow');
+  assert.match(plain[0], /^1\/5 {2}PORTFOLIO[\s\S]*Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Alive 2 {3}Bot up 3h05/);
   assert.match(P[0], /\nBig +crash +20\.00 +25\.00 +\+5\.00 +\+25\.0%\nSmall +yours/, 'highest value first; control: a position the engine did not open is yours');
   assert.match(P[1], /04:29 {2}buy {3}Big[\s\S]*top +3 +2 +\+15\.00/, 'orders and strategy PnL');
   assert.match(P[2], /RISING[^\n]*\nUp +\+20\.0%[^\n]*\n[^\n]*\nFALLING 5 MIN\nDown +-10\.0%/, 'control: a fall is never listed as rising');

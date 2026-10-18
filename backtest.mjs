@@ -29,8 +29,9 @@ export function sayText(side, name, cash, lines) {
 }
 
 // Map health, read as the site's own client does. Only binary kind 2: after the 36-byte header (record count n = u16
-// at 32), u32 + f64, then columns slot u16[n], status u8[n], badges u8[n], flags u16[n] (1 alive, 8 outside), hp u8[n],
-// max u8[n]. Kind 1 (live positions) is never read. Later kind-2 frames are updates, applied in order.
+// at 32), u32 + f64, then columns slot u16[n], status u8[n], badges u8[n] (1 kick shield, 2 faith shield), flags u16[n]
+// (1 alive, 2 poisoned, 4 drone incoming, 8 outside), hp u8[n], max u8[n]. Kind 1 (live positions) is never read.
+// Later kind-2 frames are updates, applied in order.
 export function decodeHealth(frames) {
   const out = {};
   let slots = null;
@@ -42,45 +43,77 @@ export function decodeHealth(frames) {
     if (b[0] !== 2 || b.length < 48 + n * 8) continue;
     for (let i = 0; i < n; i++) {
       const u = slots.get(v.getUint16(48 + i * 2, true)), fl = v.getUint16(48 + n * 4 + i * 2, true);
-      if (u) out[u] = { hp: b[48 + n * 6 + i], max: b[48 + n * 7 + i], alive: (fl & 1) !== 0, out: (fl & 8) !== 0 || b[48 + n * 2 + i] === 3 };
+      const bd = b[48 + n * 3 + i];
+      if (u) out[u] = { hp: b[48 + n * 6 + i], max: b[48 + n * 7 + i], alive: (fl & 1) !== 0, out: (fl & 8) !== 0 || b[48 + n * 2 + i] === 3,
+        poison: (fl & 2) !== 0, drone: (fl & 4) !== 0, shield: (bd & 1 ? 'kick' : '') + (bd & 2 ? 'faith' : '') };
     }
   }
   return out;
 }
 
-// Stream pages: the engine pushes one every 10 s and moves to the next every PAGE_MS (all 96 columns x 22 lines, 1280x720
-// at 20 px DejaVu Mono, drawn by ffmpeg on the streaming box). d = { me, names, health, breadth, startedAt, now,
-// kindOf(id) -> strategy ('' = opened by hand), deaths [{ u, t, source }] newest last, movers [{ name, ret }],
-// ranking [{ name, price }] highest first, strategies { prefix: { n, win, pnl } } }.
+// Stream pages: the engine pushes one every 10 s and moves to the next every 20 s (96 columns x 22 lines, 1280x720 at
+// 17 px DejaVu Mono, drawn by ffmpeg on the streaming box). Colors are inline marks, \x01 + one of g (gain, healthy),
+// r (loss, danger, death), y (warning, shield), c (titles) and \x02 to close; layers() splits a page into one
+// space-padded text per color so ffmpeg can stack them, one drawtext per color. d = { me, names, health, roster
+// { name: { sigil, live } }, breadth, startedAt, now, kindOf(id) -> strategy ('' = opened by hand), deaths
+// [{ u, t, source }] newest last, movers [{ name, ret }], ranking [{ name, price }] highest first, strategies
+// { prefix: { n, win, pnl } } }.
+const col = (k, x) => `\x01${k}${x}\x02`, vis = (x) => x.replace(/\x01.|\x02/g, '');
+export const LAYERS = ['w', 'g', 'r', 'y', 'c'];
+export function layers(text) {
+  const out = Object.fromEntries(LAYERS.map((k) => [k, '']));
+  let cur = 'w';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\x01') { cur = text[++i]; continue; }
+    if (ch === '\x02') { cur = 'w'; continue; }
+    for (const k of LAYERS) out[k] += ch === '\n' ? '\n' : k === cur ? ch : ' ';
+  }
+  // ffmpeg 4.4 drawtext places lines from the glyphs a text contains, so layers with different glyphs drift ~10 px
+  // apart: the same "|" at column 95 of the first line in every layer gives them all the same extent (the last one
+  // drawn, titles, shows it).
+  for (const k of LAYERS) { const [first, ...rest] = out[k].split('\n'); out[k] = [first.padEnd(95) + '|', ...rest].join('\n'); }
+  return out;
+}
 export function streamPages(d) {
-  const { me, names = {}, health = {}, breadth = 0, startedAt = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {} } = d;
+  const { me, names = {}, health = {}, roster = {}, breadth = 0, startedAt = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {} } = d;
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
-  const hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
-  const up = Math.floor((now - startedAt) / 60e3), alive = Object.values(health).filter((h) => h.alive).length;
-  const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => ((a[i] || '').padEnd(50) + (b[i] || '')).trimEnd());
-  const page = (i, title, body) => [`${i}/4  ${title}`.padEnd(75) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
-    `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}   Alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
+  const gr = (v, x) => col(v >= 0 ? 'g' : 'r', x), hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
+  const up = Math.floor((now - startedAt) / 60e3), alive = Object.values(health).filter((h) => h.alive).length, N = 5;
+  const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => { const l = a[i] || ''; return (l + ' '.repeat(Math.max(0, 50 - vis(l).length)) + (b[i] || '')).trimEnd(); });
+  const page = (i, title, body) => [col('c', `${i}/${N}  ${title}`.padEnd(75)) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
+    `Realized ${gr(me.realized_pnl_cents, s(me.realized_pnl_cents) + ' Cx')}   Open ${gr(me.unrealized_pnl_cents, s(me.unrealized_pnl_cents) + ' Cx')}   Positions ${me.holdings.length}   Alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
     '', ...body.slice(0, 19)].join('\n') + '\n';
+  const hpCol = (h) => (h.hp < h.max * 0.35 ? 'r' : h.hp < h.max * 0.7 ? 'y' : 'g');
+  const bar = (h) => col(hpCol(h), '#'.repeat(Math.round((10 * h.hp) / h.max))) + '-'.repeat(10 - Math.round((10 * h.hp) / h.max));
 
-  const pos = ['POSITION          TYPE       COST     VALUE       P/L      %'];
+  const pos = [col('c', 'POSITION          TYPE       COST     VALUE       P/L      %')];
   for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 18)) {
     const pl = h.current_value_cents - h.cost_basis_cents;
-    pos.push(`${pad(h.name, 17)} ${pad(kindOf(h.external_id) || 'yours', 6)} ${c(h.cost_basis_cents).padStart(9)} ${c(h.current_value_cents).padStart(9)} ${s(pl).padStart(9)} ${pct(h.cost_basis_cents ? pl / h.cost_basis_cents : 0).padStart(7)}`);
+    pos.push(`${pad(h.name, 17)} ${pad(kindOf(h.external_id) || 'yours', 6)} ${c(h.cost_basis_cents).padStart(9)} ${c(h.current_value_cents).padStart(9)} ${gr(pl, s(pl).padStart(9))} ${gr(pl, pct(h.cost_basis_cents ? pl / h.cost_basis_cents : 0).padStart(7))}`);
   }
-  const orders = ['LAST ORDERS (UTC)'];
-  for (const t of (me.trades || []).slice(0, 14)) orders.push(`${hm(t.occurred_at)}  ${pad(t.side, 4)}  ${pad(names[t.external_id] || '?', 16)} ${c(t.cash_cents).padStart(8)} Cx`);
-  const strat = ['STRATEGY   TRIPS   WON        PNL'];
-  for (const [k, r] of Object.entries(strategies)) strat.push(`${pad(k, 10)} ${String(r.n).padStart(5)} ${String(r.win).padStart(5)} ${s(r.pnl).padStart(10)}`);
-  const mv = [...movers].sort((a, b) => b.ret - a.ret), rows = (v) => v.map((m) => `${pad(m.name, 20)} ${pct(m.ret).padStart(8)}`);
-  const market = [`RISING 5 MIN (${Math.round(breadth * 100)} pct of the market)`, ...rows(mv.filter((m) => m.ret > 0).slice(0, 8)), '', 'FALLING 5 MIN', ...rows([...mv].reverse().filter((m) => m.ret < 0).slice(0, 8))];
-  const rank = ['MOST EXPENSIVE        PRICE', ...ranking.slice(0, 18).map((r, i) => `${String(i + 1).padStart(2)}. ${pad(r.name, 17)} ${c(r.price).padStart(7)}`)];
-  const danger = ['IN DANGER (hp < 35% or out)      HP'];
+  const orders = [col('c', 'LAST ORDERS (UTC)')];
+  for (const t of (me.trades || []).slice(0, 14)) orders.push(`${hm(t.occurred_at)}  ${col(t.side === 'buy' ? 'g' : 'r', pad(t.side, 4))}  ${pad(names[t.external_id] || '?', 16)} ${c(t.cash_cents).padStart(8)} Cx`);
+  const strat = [col('c', 'STRATEGY   TRIPS   WON        PNL')];
+  for (const [k, r] of Object.entries(strategies)) strat.push(`${pad(k, 10)} ${String(r.n).padStart(5)} ${String(r.win).padStart(5)} ${gr(r.pnl, s(r.pnl).padStart(10))}`);
+  const mv = [...movers].sort((a, b) => b.ret - a.ret), rows = (v) => v.map((m) => `${pad(m.name, 20)} ${gr(m.ret, pct(m.ret).padStart(8))}`);
+  const market = [col('c', `RISING 5 MIN (${Math.round(breadth * 100)} pct of the market)`), ...rows(mv.filter((m) => m.ret > 0).slice(0, 8)), '', col('c', 'FALLING 5 MIN'), ...rows([...mv].reverse().filter((m) => m.ret < 0).slice(0, 8))];
+  const rank = [col('c', 'MOST EXPENSIVE        PRICE'), ...ranking.slice(0, 18).map((r, i) => `${String(i + 1).padStart(2)}. ${pad(r.name, 17)} ${c(r.price).padStart(7)}`)];
+  const danger = [col('c', 'IN DANGER (hp < 35% or out)      HP')];
   for (const [u, h] of Object.entries(health).filter(([, h]) => h.alive && (h.out || h.hp < h.max * 0.35)).sort((a, b) => a[1].hp / a[1].max - b[1].hp / b[1].max).slice(0, 18))
-    danger.push(`${pad(u, 26)} ${`${h.hp}/${h.max}`.padStart(7)}${h.out ? '  out' : ''}`);
-  if (danger.length === 1) danger.push('nobody');
-  const dead = ['LAST DEATHS (UTC)'];
-  for (const x of deaths.slice(-18).reverse()) dead.push(`${hm(x.t)}  ${pad(x.u, 22)} ${pad(x.source || x.cause || '', 14)}`);
-  return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead))];
+    danger.push(`${pad(u, 26)} ${col('r', `${h.hp}/${h.max}`.padStart(7))}${h.out ? col('r', '  out') : ''}`);
+  if (danger.length === 1) danger.push(col('g', 'nobody'));
+  const dead = [col('c', 'LAST DEATHS (UTC)')];
+  for (const x of deaths.slice(-18).reverse()) dead.push(`${hm(x.t)}  ${pad(x.u, 22)} ${col('r', pad(x.source || x.cause || '', 14))}`);
+  // status: the alive contestants, weakest first, two per line: hp bar, sigil (class), shield, poison, drone, out, live
+  const st = Object.entries(health).filter(([, h]) => h.alive).sort((a, b) => a[1].hp / a[1].max - b[1].hp / b[1].max).slice(0, 34).map(([u, h]) => {
+    const r = roster[u] || {}, flag = (on, k, ch) => (on ? col(k, ch) : '.');
+    return `${pad(u, 13)} ${bar(h)} ${String(h.hp).padStart(3)} ${pad(r.sigil || '-', 10)} ${flag(h.shield, 'y', 'S')}${flag(h.poison, 'r', 'P')}${flag(h.drone, 'r', 'D')}${flag(h.out, 'r', 'O')}${flag(r.live, 'g', 'L')}`;
+  });
+  const head = col('c', 'NAME          HP BAR      HP SIGIL      SPDOL');
+  const status = two([head, ...st.slice(0, 17)], [head, ...st.slice(17)]);
+  status.push(col('c', 'S') + ' shield (armor)  ' + col('c', 'P') + ' poisoned  ' + col('c', 'D') + ' drone incoming  ' + col('c', 'O') + ' outside the zone  ' + col('c', 'L') + ' live on Kick');
+  return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead)), page(5, 'STATUS (weakest first)', status)];
 }
 
 // Scrolling ticker line for the stream (same d as streamPages): PnL, top movers, last orders, alive count. ASCII only.

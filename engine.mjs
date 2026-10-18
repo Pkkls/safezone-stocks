@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamPages, streamTicker, roundTrips } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -91,7 +91,7 @@ function api(path, body) {
 
 // Map (public, cached 2 s): health, deaths from the roster and from graves. A death knocks the stock -20% 30 s to 2 min
 // later. Known deaths are reloaded from data/deaths.jsonl: an in-game blackout hides graves and health.
-const diedAt = {}, health = {}, recentDeaths = []; // recentDeaths: newest last, for the stream
+const diedAt = {}, health = {}, roster = {}, recentDeaths = []; // roster (sigil, live) and recentDeaths (newest last): for the stream
 if (fs.existsSync('data/deaths.jsonl')) for (const l of fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); if (d.t > (diedAt[d.u] || 0)) recentDeaths.push(d); diedAt[d.u] = Math.max(diedAt[d.u] || 0, d.t); }
 recentDeaths.sort((a, b) => a.t - b.t).splice(0, recentDeaths.length - 20);
 let pendingDeath = 0, mapLoaded = false;
@@ -103,7 +103,11 @@ async function readMap() {
   for (const f of frames) {
     if (!f.text) continue;
     const o = JSON.parse(f.text);
-    for (const c of o.type === 'contestants' ? o.data.roster?.contestants || [] : []) { const n = String(c.name).toLowerCase(); if (c.eliminated_at && !diedAt[n]) diedAt[n] = Date.parse(c.eliminated_at); }
+    for (const c of o.type === 'contestants' ? o.data.roster?.contestants || [] : []) {
+      const n = String(c.name).toLowerCase();
+      if (c.eliminated_at && !diedAt[n]) diedAt[n] = Date.parse(c.eliminated_at);
+      roster[n] = { sigil: c.sigil, live: !!c.live }; // for the stream's status page
+    }
     for (const it of o.type === 'game_items' ? o.data.items : []) {
       if (it.kind !== 'gravestone' || !it.grave) continue;
       const n = it.grave.username.toLowerCase(), t = Date.parse(it.grave.died_at);
@@ -204,16 +208,18 @@ async function guard() {
     if (why) await sellOwn(h, why);
   }
   save();
-  // stream: every 10 s, the ticker line then the current page (a new one every 20 s) to STREAM_SSH, split there into
-  // ticker.txt and dash.txt (each replaced whole), drawn and streamed by stream/run.sh
+  // stream: every 10 s, the ticker and the current page (a new one every 20 s) split into one text per color, each
+  // after an "@@name" line, to STREAM_SSH; there awk writes ticker.txt, dash.txt (white) and g/r/y/c.txt (each
+  // replaced whole), drawn and streamed by stream/run.sh
   if (me && process.env.STREAM_SSH && Date.now() - lastStream >= 10e3) {
     lastStream = Date.now();
-    const split = 'cd szdash && cat > push.tmp && head -n 1 push.tmp > ticker.tmp && tail -n +2 push.tmp > dash.tmp && mv ticker.tmp ticker.txt && mv dash.tmp dash.txt';
+    const split = 'cd szdash && awk \'/^@@[a-z]+$/ { f = substr($0, 3) ".tmp"; printf "" > f; next } { print > f }\' && for f in ticker dash g r y c; do mv -f $f.tmp $f.txt; done';
     const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, split], { stdio: ['pipe', 'ignore', 'ignore'] });
     c.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
-    const d = { me, names, health, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
+    const d = { me, names, health, roster, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
       strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
-    c.stdin.end(streamTicker(d) + '\n' + pages[Math.floor(Date.now() / 20e3) % pages.length]);
+    const L = layers(pages[Math.floor(Date.now() / 20e3) % pages.length]);
+    c.stdin.end(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c }).map(([k, v]) => `@@${k}\n${v}`).join(''));
   }
 }
 
