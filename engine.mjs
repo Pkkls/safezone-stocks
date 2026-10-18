@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -251,7 +251,7 @@ function writeLive() {
 const SPLIT = 'cd szdash && exec awk \'/^@@end$/ { for (k in seen) { close(k ".tmp"); system("mv -f " k ".tmp " k ".txt") } delete seen; next } /^@@[a-z]+$/ { f = substr($0, 3); seen[f] = 1; printf "" > (f ".tmp"); next } { print > (f ".tmp") }\'';
 let pipe = null, sent = {};
 const eqPts = fs.existsSync('data/equity.jsonl') ? fs.readFileSync('data/equity.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((p) => p.t > Date.now() - 25 * 3600e3) : [];
-const SAY = { happy: ['YEEHAW! the bag is growing', 'to the moon, partner'], cool: ['just vibin in Houston', 'watching every trade'], sad: ['rough ride, partner', 'HODL... HODL...'] };
+const SAY = { happy: ['YEEHAW! the bag is growing', 'to the moon, partner'], cool: ['just vibin in Austin', 'watching every trade'], sad: ['rough ride, partner', 'HODL... HODL...'] };
 function pushStream() {
   if (!me || !process.env.STREAM_SSH) return;
   if (!pipe) {
@@ -283,7 +283,7 @@ function pushStream() {
   for (const [m, p] of [['happy', 'mg'], ['cool', 'mc'], ['sad', 'mr']]) ['a', 'b', 'c', 'd'].forEach((x, j) => { out[p + x] = m === mood ? poses[j] : ' '; });
   const recent = (t) => t && now - t < 2 * 60e3;
   out.say = bubble(recent(o?.t) ? (o.side === 'buy' ? `BOUGHT ${o.name}! ${(o.cash / 100).toFixed(2)} Cx` : `SOLD ${o.name} ${o.pnl == null ? '' : `${o.pnl >= 0 ? '+' : ''}${(o.pnl / 100).toFixed(2)} Cx`}${o.pnl > 0 ? ' yeehaw' : ''}`)
-    : recent(dx?.t) ? (dx.revive ? `${dx.u} IS BACK from the dead!` : `RIP ${dx.u}... selling fast`) : recent(px?.t) ? `nice try pumpers, ${px.name} ignored` : SAY[mood][Math.floor(now / 60e3) % 2]);
+    : recent(dx?.t) ? (dx.revive ? `${dx.u} IS BACK from the dead!` : `RIP ${dx.u}... selling fast`) : recent(px?.t) ? `nice try pumpers, ${px.name} ignored` : Math.floor(now / 20e3) % 4 === 0 ? SAY[mood][Math.floor(now / 80e3) % 2] : `FUN FACT: ${funFact(now)}`);
   const lg = layers(botLog(orders.slice(-12), recentDeaths, pumps), 50);
   Object.assign(out, { lw: lg.w, lg: lg.g, lr: lg.r, ly: lg.y });
   const batch = Object.entries(out).filter(([key, v]) => sent[key] !== v);

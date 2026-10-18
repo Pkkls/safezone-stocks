@@ -14,7 +14,7 @@ R="$T:reload=1"
 # header
 VF="drawtext=$T:textfile=banner.txt:fontsize=13:fontcolor=0x39d0ff:line_spacing=0:x=24:y=8"
 VF="$VF,drawtext=fontfile=$B:expansion=none:text=SAFEZONE STOCK BOT:fontsize=28:fontcolor=0xe6edf3:x=190:y=12"
-VF="$VF,drawtext=$T:text=play money  -  automated trading  -  Houston TX:fontsize=15:fontcolor=0x7d8590:x=192:y=50"
+VF="$VF,drawtext=$T:text=automated play money bot  -  Safe Zone  -  Austin TX:fontsize=15:fontcolor=0x7d8590:x=192:y=50"
 VF="$VF,drawtext=fontfile=$B:expansion=none:text=LIVE:fontsize=22:fontcolor=0xff5c5c:x=w-90:y=22:enable='lt(mod(t\,1)\,0.6)'"
 # profit: total PnL big and pulsing (green pg.txt / red pr.txt, one of them blank), realized/open under it
 PG="fontfile=$B:expansion=none:reload=1:fontsize=32:x=720:y=8:alpha='0.8+0.2*sin(t*3)'"
@@ -51,8 +51,7 @@ for M in g:0x3fb950 c:0x39d0ff r:0xff6b6b; do
   done
 done
 VF="$VF,drawtext=$R:textfile=say.txt:fontsize=13:fontcolor=0xe6edf3:line_spacing=2:x=1046:y=330"
-VF="$VF,drawtext=$T:text=CX DANCE FLOOR:fontsize=12:fontcolor=0x7d8590:x=1066:y=420"
-VF="$VF,drawtext=$T:text=HOUSTON TX:fontsize=12:fontcolor=0x7d8590:x=1080:y=438"
+VF="$VF,drawtext=$T:text=CX DANCE FLOOR  -  AUSTIN TX:fontsize=12:fontcolor=0x7d8590:x=1046:y=462"
 # disco floor: two tile patterns swapping twice a second
 DF="fontsize=14:x=892:y=486"
 VF="$VF,drawtext=$T:text=#==#    #==#    #==#    #==#    #==#:fontcolor=0xff4fd8:$DF:enable='lt(mod(t\,1)\,0.5)'"

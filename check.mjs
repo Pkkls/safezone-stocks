@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -187,7 +187,12 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     assert.strictEqual(moodOf(pts.map((p) => ({ ...p, value: 1000 })), t0 + 99 * 60e3), 'cool', 'control: flat: cool');
     for (const m of ['happy', 'cool', 'sad']) { const ps = mascot(m); assert.ok(ps.length === 4 && ps.every((p) => p.split('\n').length === 8 && p.includes('.-^-.')), m + ': 4 poses in the hat'); }
     const b = bubble('SOLD SomeoneWithALongName +137.20 Cx yeehaw').trimEnd().split('\n');
-    assert.ok(b.length === 4 && new Set(b.map((x) => x.length)).size === 1, 'bubble: two lines in a closed box: ' + JSON.stringify(b));
+    assert.ok(b.length === 5 && new Set(b.map((x) => x.length)).size === 1, 'bubble: wrapped lines in a closed box: ' + JSON.stringify(b));
+    // fun facts: every one shown whole in the bubble after "FUN FACT: ", printable ASCII (the stream font), no repeat
+    const said = (t) => bubble(t).split('\n').slice(1, -2).map((l) => l.slice(2, -2).trim()).join(' ');
+    for (const f of FUN_FACTS) assert.ok(said(`FUN FACT: ${f}`) === `FUN FACT: ${f}` && /^[\x20-\x7e]+$/.test(f), 'fact cut or not ASCII: ' + f);
+    assert.ok(FUN_FACTS.length >= 30 && new Set(FUN_FACTS).size === FUN_FACTS.length && funFact(0) !== funFact(20e3), 'facts: 30+, distinct, a new one every 20 s');
+    assert.notStrictEqual(said('FUN FACT: ' + 'x'.repeat(130)), 'FUN FACT: ' + 'x'.repeat(130), 'control: a too long text is caught');
     const own = ownOrders([JSON.stringify({ t: '2026-10-18T21:00:11Z', ev: 'stock-market/buy', name: 'vimp', why: 'top #4', status: 200, res: { cash_cents: 9318 } }),
       JSON.stringify({ t: '2026-10-18T21:05:33Z', ev: 'stock-market/sell', name: 'vimp', why: 'toprank 43', status: 200, res: { cash_cents: 897 } }),
       JSON.stringify({ t: '2026-10-18T21:05:34Z', ev: 'stock-market/buy', name: 'x', why: 'top #4', status: 429, res: {} })]);

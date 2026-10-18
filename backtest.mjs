@@ -158,7 +158,7 @@ export function equityChart(points, now, w = 44, h = 6, span = 24 * 3600e3) {
   for (let r = h - 1; r >= 0; r--) rows.push(q.map((n) => (n < 0 ? ' ' : B[Math.max(0, Math.min(8, n - r * 8))])).join(''));
   return { rows, lo, hi, first: vals[0], last: vals.at(-1) };
 }
-// The CX mascot, in a Houston cowboy hat. Mood from the total value 15 min ago: happy (up 0.5%+), sad (down 0.5%+),
+// The CX mascot, in a Texas cowboy hat. Mood from the total value 15 min ago: happy (up 0.5%+), sad (down 0.5%+),
 // cool otherwise. Four poses each, cycled 4 times a second by run.sh.
 const HAT = ['     .-^-.', '  __/_____\\__'];
 const POSES = {
@@ -177,12 +177,57 @@ export const moodOf = (points, now) => {
 };
 export const mascot = (mood) => POSES[mood].map((p) => [...HAT, ...p.map((x) => ' ' + x)].join('\n') + '\n');
 // What the mascot says: the bot's last move within 2 min, else a line for its mood. Two lines of at most w chars.
-export function bubble(text, w = 22) {
+export function bubble(text, w = 24, n = 5) {
   const words = String(text).split(' '), l = [''];
   for (const x of words) { if ((l.at(-1) + ' ' + x).trim().length > w && l.at(-1)) l.push(''); l[l.length - 1] = (l.at(-1) + ' ' + x).trim().slice(0, w); }
-  const L = l.slice(0, 2).map((x) => x.padEnd(w));
+  const L = l.slice(0, n).map((x) => x.padEnd(w));
   return [` .${'-'.repeat(w + 1)}.`, ...L.map((x, i) => `${i === 0 ? '<' : '|'} ${x} |`), ` '${'-'.repeat(w + 1)}'`].join('\n') + '\n';
 }
+// Fun facts the mascot tells when nothing happened for 2 min, one per 20 s, topics interleaved (Ice Poseidon, the Cx
+// community, Safe Zone rules, this market, the mascot). Sources, read 18/10: en.wikipedia.org/wiki/Ice_Poseidon,
+// iceposeidon.com/safezone and /safezone/wiki, kxan.com (Austin event), the event's own map and stock API. Each fits
+// the bubble (5 lines of 24) after "FUN FACT: ", checked by check.mjs.
+export const FUN_FACTS = [
+  'Ice Poseidon is Paul Denino, born September 29, 1994.',
+  'Safe Zone is in Austin, Texas. Any Kick streamer could join, for a $50,000 prize.',
+  'Each contestant has a stock here. It opens at 10 Cx, with a 1.5% fee on every buy and sell.',
+  'He made up the name Ice Poseidon with a random name generator when he was 12.',
+  'Cx is the signature of his community. Hence the Cx Bucks traded here.',
+  'Step out of the zone: 5 s of grace, then 1 HP every 2 s. That is 30 HP a minute.',
+  'I wear a cowboy hat because we are in Texas, partner.',
+  'He blew up in 2015 streaming Old School RuneScape.',
+  'Everyone starts at 100 HP. Some sigils raise or lower your max HP.',
+  'A death knocks a stock about 20% down within 2 minutes. This bot sells first.',
+  'His IRL era started with him streaming himself playing Pokemon Go.',
+  'Contestants carry 3 items max, and items do not stack.',
+  'In 2017 Rolling Stone called him a pioneer "life streamer".',
+  'Die and you leave a gravestone with your items. Anyone nearby can loot it.',
+  'On October 18 pumpers pushed one stock 10x in seconds. This bot now ignores pumps.',
+  'In September 2016 he joined NRG Esports on their Old School RuneScape roster.',
+  'Most Safe Zone actions need you within 10 m of your target.',
+  'April 28, 2017: a fake bomb threat got him pulled off a plane in Phoenix. Twitch banned him.',
+  'The dead can come back: a revive works within 10 min of dying.',
+  'After the Twitch ban most of his fans, the "Purple Army", followed him to YouTube. A rarity.',
+  'A trade between contestants can hold up to 10 items.',
+  'This bot started the event with 607 Cx Bucks.',
+  'August 2019: he moved to Mixer, Microsoft\'s streaming site.',
+  'The zone moves however Ice wants: it can shrink, speed up, or even split apart.',
+  'January 2020: he hosted Scuffed Brother, Mixer\'s first 5-day game show.',
+  'Zombies can show up and chase contestants. Stay in the zone.',
+  'Scuffed Brother pulled 500 million sparks of viewer votes in 5 days.',
+  'Sigils are classes: piety, healing, protection, endurance, greed, trolling, necromancy...',
+  'He joined Kick on December 7, 2022.',
+  'The trolling sigil can spawn an unsafe circle right inside the safe zone.',
+  'He is 6 ft 3 in (191 cm). Tall enough to spot the safe zone from far away.',
+  'Cx Bucks have no real value. Spend them in the Safe Zone shop.',
+  'His YouTube channel passed 100 million views.',
+  'Kicking back with a shield? Shields come as kick or faith badges in this game.',
+  'March 2023: he boxed a tag team match in Telford, England. Lost by TKO in round 2.',
+  'His community Discord had 92,000 members in April 2024.',
+  'CxCoin, named after Cx, launched July 2021. Its pool was drained in January 2022.',
+  'June 2023: arrested in Bangkok mid-stream. The charges were dropped by August.',
+];
+export const funFact = (now) => FUN_FACTS[Math.floor(now / 20e3) % FUN_FACTS.length];
 // Bot log for the right panel, newest first, at most 42 columns: own orders (sells with their net PnL), deaths,
 // revives and refused pumps. orders [{ t, side, name, cash, pnl? }].
 export function botLog(orders, deaths, pumps, n = 6) {

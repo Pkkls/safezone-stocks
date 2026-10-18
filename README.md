@@ -100,10 +100,12 @@ restarting after any drop. Measured on a 1 GB VPS: 8% of a core and 119 MB at 12
 - **Left**: the current page, a new one every 20 s (5, plus one STATUS page per 34 alive contestants). The header line
   fills a bar until the next page, the line under it says what the page shows.
 - **Right**: the total value over 24 h as a block chart (green when up over the window, red when down), with low, high
-  and now; the CX mascot in a cowboy hat (Houston), dancing on a disco floor, 4 poses a second, happy and green when
-  the value is up 0.5% over 15 min, sad and red when down 0.5%, cool and cyan otherwise, with a speech bubble that
-  announces its last buy or sell (net PnL), a death or a revive within 2 min; the bot log (its orders, deaths,
-  revives and refused pumps, newest first).
+  and now; the CX mascot in a cowboy hat (the event is in Austin, Texas), dancing on a disco floor, 4 poses a second,
+  happy and green when the value is up 0.5% over 15 min, sad and red when down 0.5%, cool and cyan otherwise, with a
+  speech bubble that announces its last buy or sell (net PnL), a death or a revive within 2 min, and otherwise tells
+  a fun fact every 20 s (38 of them in `FUN_FACTS`, `backtest.mjs`: Ice Poseidon's career, the Cx community, Safe Zone
+  rules, this market, the mascot; taken from Wikipedia, iceposeidon.com and KXAN on 18/10) or a line for its mood;
+  the bot log (its orders, deaths, revives and refused pumps, newest first).
 - **Bottom**: a scrolling ticker (PnL, 5-min movers, last orders, alive count).
 
 1. Server (ffmpeg + DejaVu fonts): copy `stream/run.sh` to `~/szdash/`, put the ingest URL and stream key in
@@ -119,7 +121,7 @@ restarting after any drop. Measured on a 1 GB VPS: 8% of a core and 119 MB at 12
 | 5 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths (with what killed them) and revives, newest first |
 | 6 and on, STATUS | every alive contestant, weakest first, 34 per page: HP bar, HP, sigil, and the S P D O L R flags below |
 
-The seven pages on 18/10 around 21:40 UTC (48 alive, two STATUS pages):
+The seven pages on 18/10 around 21:58 UTC (48 alive, two STATUS pages, the mascot telling fun facts):
 
 ![Stream page 1, portfolio](docs/screenshots/stream-page-1.png)
 
@@ -332,7 +334,7 @@ log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, bot log), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules
