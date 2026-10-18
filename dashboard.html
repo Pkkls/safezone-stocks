@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -173,20 +173,20 @@ svg.chart text { fill: var(--muted); font: 11px var(--font); font-variant-numeri
 <header>
   <div class="brand"><svg class="ico"><use href="#i-activity"/></svg>SafeZone stocks</div>
   <nav aria-label="Sections">
-    <a href="#portefeuille">Portefeuille</a><a href="#strategies">Stratégies</a><a href="#marche">Marché</a><a href="#jeu">Jeu</a><a href="#moteur">Moteur</a>
+    <a href="#portfolio">Portfolio</a><a href="#strategies">Strategies</a><a href="#market">Market</a><a href="#game">Game</a><a href="#engine">Engine</a>
   </nav>
   <div class="bar-right" role="status" aria-live="polite">
-    <span id="engine-pill" class="pill"><svg class="ico sm"><use href="#i-power"/></svg>Connexion</span>
+    <span id="engine-pill" class="pill"><svg class="ico sm"><use href="#i-power"/></svg>Connecting</span>
     <span class="meta"><span id="livedot" class="livedot"></span></span>
-    <span class="meta" id="updated">en attente</span>
+    <span class="meta" id="updated">waiting</span>
     <span class="meta" id="countdown"></span>
   </div>
 </header>
 <div class="err-banner" id="err"><svg class="ico"><use href="#i-circle-x"/></svg><span id="err-text"></span></div>
 
 <main>
-  <section id="portefeuille">
-    <h2><svg class="ico"><use href="#i-wallet"/></svg>Portefeuille</h2>
+  <section id="portfolio">
+    <h2><svg class="ico"><use href="#i-wallet"/></svg>Portfolio</h2>
     <div class="grid">
       <div class="card w3" id="m-hero"></div>
       <div class="card w9" id="m-tiles"></div>
@@ -197,7 +197,7 @@ svg.chart text { fill: var(--muted); font: 11px var(--font); font-variant-numeri
   </section>
 
   <section id="strategies">
-    <h2><svg class="ico"><use href="#i-target"/></svg>Stratégies</h2>
+    <h2><svg class="ico"><use href="#i-target"/></svg>Strategies</h2>
     <div class="grid">
       <div class="card w5" id="m-stratpnl"></div>
       <div class="card w3" id="m-trial"></div>
@@ -212,8 +212,8 @@ svg.chart text { fill: var(--muted); font: 11px var(--font); font-variant-numeri
     </div>
   </section>
 
-  <section id="marche">
-    <h2><svg class="ico"><use href="#i-chart-line"/></svg>Marché</h2>
+  <section id="market">
+    <h2><svg class="ico"><use href="#i-chart-line"/></svg>Market</h2>
     <div class="grid">
       <div class="card w8" id="m-breadth"></div>
       <div class="card" id="m-mstats"></div>
@@ -227,8 +227,8 @@ svg.chart text { fill: var(--muted); font: 11px var(--font); font-variant-numeri
     </div>
   </section>
 
-  <section id="jeu">
-    <h2><svg class="ico"><use href="#i-heart-pulse"/></svg>Jeu</h2>
+  <section id="game">
+    <h2><svg class="ico"><use href="#i-heart-pulse"/></svg>Game</h2>
     <div class="grid">
       <div class="card w3" id="m-alive"></div>
       <div class="card w6" id="m-deathsh"></div>
@@ -240,8 +240,8 @@ svg.chart text { fill: var(--muted); font: 11px var(--font); font-variant-numeri
     </div>
   </section>
 
-  <section id="moteur">
-    <h2><svg class="ico"><use href="#i-cpu"/></svg>Moteur</h2>
+  <section id="engine">
+    <h2><svg class="ico"><use href="#i-cpu"/></svg>Engine</h2>
     <div class="grid">
       <div class="card w3" id="m-health"></div>
       <div class="card w3" id="m-api"></div>
@@ -258,20 +258,20 @@ svg.chart text { fill: var(--muted); font: 11px var(--font); font-variant-numeri
 
 <script>
 'use strict';
-// ---------- formatting
-const nf2 = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const nf0 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
+// ---------- formatting (numbers en-US, 24 h clock)
+const nf2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const cx = (c) => c == null ? '-' : nf2.format(c / 100);
 const cxs = (c) => c == null ? '-' : (c > 0 ? '+' : c < 0 ? '−' : '') + nf2.format(Math.abs(c) / 100);
-const pct = (x, d = 1) => x == null || !isFinite(x) ? '-' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x * 100).toFixed(d).replace('.', ',') + ' %';
+const pct = (x, d = 1) => x == null || !isFinite(x) ? '-' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x * 100).toFixed(d) + '%';
 const cls = (x) => x == null ? 'mut' : x > 0 ? 'pos' : x < 0 ? 'neg' : 'mut';
-const hm = (t) => t ? new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '-';
-const hms = (t) => t ? new Date(t).toLocaleTimeString('fr-FR') : '-';
-const ago = (ms) => ms == null ? '-' : ms < 60e3 ? `${Math.round(ms / 1e3)} s` : ms < 3600e3 ? `${Math.round(ms / 60e3)} min` : `${(ms / 3600e3).toFixed(1).replace('.', ',')} h`;
-const dur = (ms) => { if (ms == null || ms < 0) return '-'; const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 3600e3), m = Math.floor(ms % 3600e3 / 60e3); return d ? `${d} j ${h} h` : h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`; };
+const hm = (t) => t ? new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '-';
+const hms = (t) => t ? new Date(t).toLocaleTimeString('en-GB') : '-';
+const ago = (ms) => ms == null ? '-' : ms < 60e3 ? `${Math.round(ms / 1e3)}s` : ms < 3600e3 ? `${Math.round(ms / 60e3)} min` : `${(ms / 3600e3).toFixed(1)} h`;
+const dur = (ms) => { if (ms == null || ms < 0) return '-'; const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 3600e3), m = Math.floor(ms % 3600e3 / 60e3); return d ? `${d}d ${h}h` : h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m} min`; };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ico = (n, c = '') => `<svg class="ico sm ${c}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
-const STRATS = { top: 'Panier top', crash: 'Crash', surv: 'Survivants', mom: 'Momentum', dip: 'Rebond (ancien)', manuel: 'Manuel' };
+const STRATS = { top: 'Top basket', crash: 'Crash', surv: 'Survivors', mom: 'Momentum', dip: 'Rebound (old)', manuel: 'Manual' };
 const scol = (k) => `var(--s-${STRATS[k] ? k : 'manuel'})`;
 const stag = (k) => `<span class="tag"><i class="sw" style="background:${scol(k)}"></i>${esc(STRATS[k] || k)}</span>`;
 const empty = (t) => `<div class="empty">${esc(t)}</div>`;
@@ -294,7 +294,7 @@ const wOf = (id) => Math.max(260, (document.getElementById(id)?.clientWidth || 8
 function lineChart({ series, height = 200, yFmt = (v) => v, refs = [], yMin, W = 800 }) {
   const id = 'c' + (++chartSeq), H = height, L = 52, R = 12, T = 10, B = 22;
   const pts = series.flatMap((s) => s.pts);
-  if (pts.length < 2) return empty('Pas encore assez de points');
+  if (pts.length < 2) return empty('Not enough points yet');
   let x0 = Math.min(...pts.map((p) => p[0])), x1 = Math.max(...pts.map((p) => p[0]));
   let y0 = Math.min(...pts.map((p) => p[1]), ...refs.map((r) => r.v)), y1 = Math.max(...pts.map((p) => p[1]), ...refs.map((r) => r.v));
   if (yMin != null) y0 = Math.min(y0, yMin);
@@ -302,7 +302,7 @@ function lineChart({ series, height = 200, yFmt = (v) => v, refs = [], yMin, W =
   const X = (t) => L + (t - x0) / Math.max(1, x1 - x0) * (W - L - R), Y = (v) => T + (1 - (v - y0) / Math.max(1e-9, y1 - y0)) * (H - T - B);
   let g = ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)" stroke-width="1"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${esc(yFmt(v))}</text>`).join('');
   const xn = W < 500 ? 2 : 4, xt = []; for (let i = 0; i <= xn; i++) { const t = x0 + (x1 - x0) * i / xn; xt.push(`<text x="${X(t)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === xn ? 'end' : 'middle'}">${hm(t)}</text>`); }
-  g += refs.map((r) => `<line x1="${L}" x2="${W - R}" y1="${Y(r.v)}" y2="${Y(r.v)}" stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="0"/><text x="${W - R}" y="${Y(r.v) - 4}" text-anchor="end" style="fill:var(--ink-2)">${esc(r.label)}</text>`).join('');
+  g += refs.map((r) => `<line x1="${L}" x2="${W - R}" y1="${Y(r.v)}" y2="${Y(r.v)}" stroke="var(--ink-2)" stroke-width="1"/><text x="${W - R}" y="${Y(r.v) - 4}" text-anchor="end" style="fill:var(--ink-2)">${esc(r.label)}</text>`).join('');
   const lines = series.map((s) => {
     const d = s.pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
     const last = s.pts.at(-1);
@@ -313,8 +313,8 @@ function lineChart({ series, height = 200, yFmt = (v) => v, refs = [], yMin, W =
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px" data-line="${id}" role="img" aria-label="${esc(series.map((s) => s.label).join(', '))}">${g}${xt.join('')}${lines}<line class="xh" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/><rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent"/></svg>` +
     (series.length > 1 ? `<div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('')}</div>` : '');
 }
-function columns({ bars, height = 150, yFmt = (v) => nf0.format(v), color = 'var(--s-top)', xLabel = (b) => hm(b.t), W = 800, label = 'graphique en colonnes' }) {
-  if (!bars.length) return empty('Pas encore de données');
+function columns({ bars, height = 150, yFmt = (v) => nf0.format(v), color = 'var(--s-top)', xLabel = (b) => hm(b.t), W = 800, label = 'column chart' }) {
+  if (!bars.length) return empty('No data yet');
   const H = height, L = 52, R = 6, T = 8, B = 20, n = bars.length, slot = (W - L - R) / n, bw = Math.min(24, Math.max(2, slot - 2));
   const ticks = niceTicks(0, Math.max(...bars.map((b) => b.v), 1), 3), max = ticks.at(-1);
   const Y = (v) => T + (1 - v / max) * (H - T - B);
@@ -337,7 +337,7 @@ function spark(vals, w = 80, h = 20) {
 }
 // diverging bars around zero (strategy PnL)
 function divBars(rows, fmt) {
-  if (!rows.length) return empty('Aucun aller-retour clos');
+  if (!rows.length) return empty('No closed round trip yet');
   const m = Math.max(...rows.map((r) => Math.abs(r.v)), 1);
   return `<div class="hbars">${rows.map((r) => {
     const w = Math.abs(r.v) / m * 50;
@@ -378,109 +378,109 @@ function render() {
   const E = S.engine, K = S.kpi, M = S.market, G = S.game, now = S.now;
   chartSeq = 0;
   // header
-  const pills = { ok: ['good', 'shield-check', 'Moteur actif'], blocked: ['warning', 'pause', 'API en pause'], auth: ['critical', 'shield-alert', 'Session perdue'], down: ['critical', 'circle-x', 'Moteur muet'] };
+  const pills = { ok: ['good', 'shield-check', 'Engine running'], blocked: ['warning', 'pause', 'API paused'], auth: ['critical', 'shield-alert', 'Session lost'], down: ['critical', 'circle-x', 'Engine silent'] };
   const [pk, pi, pl] = pills[E.status] || pills.down;
   set('engine-pill', `${ico(pi)}${pl}`); document.getElementById('engine-pill').className = `pill ${pk}`;
-  set('updated', `données il y a ${ago(E.liveAge)}`);
-  set('countdown', E.end ? `fin de l'event dans ${dur(E.end - now)}` : '');
+  set('updated', `data ${ago(E.liveAge)} old`);
+  set('countdown', E.end ? `event ends in ${dur(E.end - now)}` : '');
 
-  // Portefeuille
+  // Portfolio
   const gain = K.value != null ? K.value - S.startCash : null;
-  set('m-hero', `<div class="hero"><span class="label">Valeur totale (Cx)</span><span class="big">${cx(K.value)}</span><span class="delta ${cls(gain)}">${cxs(gain)} Cx · ${pct(gain != null ? gain / S.startCash : null)}</span><span class="note">depuis ${cx(S.startCash)} Cx le 17/10 à 20:21 UTC</span></div>`);
+  set('m-hero', `<div class="hero"><span class="label">Total value (Cx)</span><span class="big">${cx(K.value)}</span><span class="delta ${cls(gain)}">${cxs(gain)} Cx · ${pct(gain != null ? gain / S.startCash : null)}</span><span class="note">from ${cx(S.startCash)} Cx on 17/10 at 20:21 UTC</span></div>`);
   const tile = (icon, k, v, s, c = '') => `<div class="tile"><div class="k">${ico(icon)}${k}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`;
   const unreal = S.positions.reduce((a, p) => a + (p.pnl || 0), 0);
-  set('m-tiles', card('coins', 'En un coup d\'œil', '', `<div class="tiles">
-    ${tile('wallet', 'Cash', cx(K.cash), 'après le dernier ordre')}
-    ${tile('layers', 'Investi', cx(K.invested), `${K.positions} positions`)}
-    ${tile('trending-up', 'PnL latent', cxs(unreal), 'valeur moins coût', cls(unreal))}
-    ${tile('check', 'PnL clos', cxs(K.tripsPnl), 'allers-retours du moteur', cls(K.tripsPnl))}
-    ${tile('coins', 'PnL réalisé (site)', cxs(K.realized), 'compté par le site', cls(K.realized))}
-    ${tile('scroll-text', 'Ordres 24 h', nf0.format(K.ordersToday), K.trading === false ? 'trading coupé par le site' : 'trading ouvert')}
+  set('m-tiles', card('coins', 'At a glance', '', `<div class="tiles">
+    ${tile('wallet', 'Cash', cx(K.cash), 'after the latest order')}
+    ${tile('layers', 'Invested', cx(K.invested), `${K.positions} positions`)}
+    ${tile('trending-up', 'Unrealized PnL', cxs(unreal), 'value minus cost', cls(unreal))}
+    ${tile('check', 'Closed PnL', cxs(K.tripsPnl), 'engine round trips', cls(K.tripsPnl))}
+    ${tile('coins', 'Realized PnL (site)', cxs(K.realized), 'as the site counts it', cls(K.realized))}
+    ${tile('scroll-text', 'Orders 24 h', nf0.format(K.ordersToday), K.trading === false ? 'trading closed by the site' : 'trading open')}
   </div>`));
   const eq = S.equity.filter((p) => p[1] != null);
   set('m-equity', eq.length > 1
-    ? card('chart-line', 'Valeur totale', 'cash et positions, un point par minute', lineChart({ series: [{ label: 'Valeur', color: 'var(--s-top)', pts: eq, area: true }], refs: [{ v: S.startCash, label: 'départ' }], yFmt: (v) => nf0.format(v / 100), height: 210, W: wOf('m-equity') }))
-    : card('chart-line', 'Cash après chaque ordre', 'en attendant la courbe de valeur', S.cashCurve.length > 1 ? lineChart({ series: [{ label: 'Cash', color: 'var(--s-surv)', pts: S.cashCurve }], yFmt: (v) => nf0.format(v / 100), height: 210, W: wOf('m-equity') }) + '<div class="note">Le cash baisse à chaque achat sans que la valeur baisse. La courbe de valeur totale (cash et positions) prend le relais dès 2 points, un par minute.</div>' : empty('Pas encore de points')));
+    ? card('chart-line', 'Total value', 'cash and positions, one point a minute', lineChart({ series: [{ label: 'Value', color: 'var(--s-top)', pts: eq, area: true }], refs: [{ v: S.startCash, label: 'start' }], yFmt: (v) => nf0.format(v / 100), height: 210, W: wOf('m-equity') }))
+    : card('chart-line', 'Cash after each order', 'until the value curve has points', S.cashCurve.length > 1 ? lineChart({ series: [{ label: 'Cash', color: 'var(--s-surv)', pts: S.cashCurve }], yFmt: (v) => nf0.format(v / 100), height: 210, W: wOf('m-equity') }) + '<div class="note">Cash drops on every buy while the value does not. The total value curve (cash and positions) takes over at 2 points, one a minute.</div>' : empty('No points yet')));
   const alloc = {};
   for (const p of S.positions) alloc[p.kind] = (alloc[p.kind] || 0) + (p.value || 0);
   const allocRows = Object.entries(alloc).sort((a, b) => b[1] - a[1]);
   const total = (K.cash || 0) + allocRows.reduce((a, r) => a + r[1], 0);
-  set('m-alloc', card('layers', 'Répartition', 'part de la valeur', total ? `<div class="hbars">${[...allocRows, ['cash', K.cash || 0]].map(([k, v]) => `<div class="hb" data-tip="${esc(`${STRATS[k] || 'Cash'}: ${cx(v)} Cx`)}"><span class="lab">${k === 'cash' ? 'Cash' : stag(k)}</span><span class="track" style="background:var(--surface-2);border-radius:4px"><i style="left:0;width:${v / total * 100}%;background:${k === 'cash' ? 'var(--ink-2)' : scol(k)};border-radius:0 4px 4px 0"></i></span><span class="val">${(v / total * 100).toFixed(0)} %</span></div>`).join('')}</div>` : empty('Rien à répartir')));
+  set('m-alloc', card('layers', 'Allocation', 'share of the value', total ? `<div class="hbars">${[...allocRows, ['cash', K.cash || 0]].map(([k, v]) => `<div class="hb" data-tip="${esc(`${STRATS[k] || 'Cash'}: ${cx(v)} Cx`)}"><span class="lab">${k === 'cash' ? 'Cash' : stag(k)}</span><span class="track" style="background:var(--surface-2);border-radius:4px"><i style="left:0;width:${v / total * 100}%;background:${k === 'cash' ? 'var(--ink-2)' : scol(k)};border-radius:0 4px 4px 0"></i></span><span class="val">${(v / total * 100).toFixed(0)}%</span></div>`).join('')}</div>` : empty('Nothing to allocate')));
   const pos = [...S.positions].sort((a, b) => (b.value || 0) - (a.value || 0));
-  set('m-positions', card('layers', 'Positions', `${pos.length} ouvertes`, pos.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Action</th><th scope="col">Stratégie</th><th scope="col" class="num">Coût</th><th scope="col" class="num">Valeur</th><th scope="col" class="num">PnL</th><th scope="col" class="num">%</th><th scope="col" class="num">Prix</th><th scope="col" class="num">Pic</th><th scope="col">Rang</th><th scope="col">Tenue</th><th scope="col">PV</th><th scope="col">Sortie</th></tr></thead><tbody>${pos.map((p) => {
+  set('m-positions', card('layers', 'Positions', `${pos.length} open`, pos.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Stock</th><th scope="col">Strategy</th><th scope="col" class="num">Cost</th><th scope="col" class="num">Value</th><th scope="col" class="num">PnL</th><th scope="col" class="num">%</th><th scope="col" class="num">Price</th><th scope="col" class="num">Peak</th><th scope="col">Rank</th><th scope="col">Held</th><th scope="col">HP</th><th scope="col">Exit</th></tr></thead><tbody>${pos.map((p) => {
     const rank = M.ranked.find((r) => r.id === p.id)?.rank;
     const hpv = p.hp && p.hp.max ? p.hp.hp / p.hp.max : null;
-    const exit = p.kind === 'top' ? (rank ? `rang ${rank} / ${S.P.topExit}` : 'hors classement') : p.kind === 'manuel' ? `trail 15 %` : p.kind === 'crash' || p.kind === 'dip' ? `${Math.round((S.P.dipHold || 0) / 60e3)} min ou run` : '';
-    return `<tr><td>${esc(p.name)}</td><td>${stag(p.kind === 'dip' ? 'crash' : p.kind)}</td><td class="num">${cx(p.cost)}</td><td class="num">${cx(p.value)}</td><td class="num ${cls(p.pnl)}">${cxs(p.pnl)}</td><td class="num ${cls(p.pct)}">${pct(p.pct)}</td><td class="num">${cx(p.p)}</td><td class="num">${cx(p.peak)}</td><td>${rank ? '#' + rank : '-'}</td><td>${p.since ? dur(now - p.since) : '-'}</td><td>${hpv == null ? '<span class="mut">-</span>' : `<span class="hpbar" data-tip="${p.hp.hp}/${p.hp.max} PV${p.hp.out ? ', hors zone' : ''}"><i style="width:${hpv * 100}%;background:var(--${hpv < .25 ? 'critical' : hpv < .5 ? 'warning' : 'good'})"></i></span>`}</td><td class="mut">${esc(exit)}</td></tr>`;
-  }).join('')}</tbody></table></div>` : empty('Aucune position ouverte')));
+    const exit = p.kind === 'top' ? (rank ? `rank ${rank} / ${S.P.topExit}` : 'out of the ranking') : p.kind === 'manuel' ? '15% trail' : p.kind === 'crash' || p.kind === 'dip' ? `${Math.round((S.P.dipHold || 0) / 60e3)} min or run` : '';
+    return `<tr><td>${esc(p.name)}</td><td>${stag(p.kind === 'dip' ? 'crash' : p.kind)}</td><td class="num">${cx(p.cost)}</td><td class="num">${cx(p.value)}</td><td class="num ${cls(p.pnl)}">${cxs(p.pnl)}</td><td class="num ${cls(p.pct)}">${pct(p.pct)}</td><td class="num">${cx(p.p)}</td><td class="num">${cx(p.peak)}</td><td>${rank ? '#' + rank : '-'}</td><td>${p.since ? dur(now - p.since) : '-'}</td><td>${hpv == null ? '<span class="mut">-</span>' : `<span class="hpbar" data-tip="${p.hp.hp}/${p.hp.max} HP${p.hp.out ? ', outside the zone' : ''}"><i style="width:${hpv * 100}%;background:var(--${hpv < .25 ? 'critical' : hpv < .5 ? 'warning' : 'good'})"></i></span>`}</td><td class="mut">${esc(exit)}</td></tr>`;
+  }).join('')}</tbody></table></div>` : empty('No open position')));
 
-  // Stratégies
+  // Strategies
   const order = ['top', 'crash', 'surv', 'mom', 'dip', 'manuel'];
-  const rows = Object.entries(S.byStrat).sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([k, s]) => ({ label: stag(k), v: s.pnl, color: scol(k), tip: `${STRATS[k] || k}: ${s.n} allers-retours, ${s.wins} gagnants (${Math.round(s.wins / s.n * 100)} %)\nmeilleur ${cxs(s.best)} Cx, pire ${cxs(s.worst)} Cx` }));
-  set('m-stratpnl', card('target', 'PnL par stratégie', 'allers-retours clos, Cx', divBars(rows, (v) => cxs(v)) + (rows.length ? `<div class="tbl-wrap" tabindex="0" style="margin-top:10px"><table><thead><tr><th scope="col">Stratégie</th><th scope="col" class="num">Clos</th><th scope="col" class="num">Gagnants</th><th scope="col" class="num">Moyenne</th></tr></thead><tbody>${Object.entries(S.byStrat).map(([k, s]) => `<tr><td>${stag(k)}</td><td class="num">${s.n}</td><td class="num">${Math.round(s.wins / s.n * 100)} %</td><td class="num ${cls(s.pnl)}">${cxs(s.pnl / s.n)}</td></tr>`).join('')}</tbody></table></div>` : '')));
-  set('m-trial', card('shield-check', 'Coupe-circuits', '10 allers-retours', `<div class="list">${['top', 'crash', 'surv'].map((k) => {
-    const t = S.trial[k]; const st = t.disabled ? ['warning', 'désactivée par le tuner'] : t.off ? ['critical', 'coupée'] : ['good', 'active'];
-    return `<div class="li"><span class="grow">${stag(k)}</span>${status(st[0], st[1])}<span class="mut" data-tip="allers-retours depuis le dernier réarmement">${t.n}/10 · <span class="${cls(t.pnl)}">${cxs(t.pnl)}</span></span></div>`;
-  }).join('')}<div class="li"><span class="grow">${stag('mom')}</span>${status(M.lastBreadth >= S.P.minBreadth ? 'good' : 'warning', M.lastBreadth >= S.P.minBreadth ? 'peut entrer' : 'attend une ruée')}</div></div>`));
+  const rows = Object.entries(S.byStrat).sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([k, s]) => ({ label: stag(k), v: s.pnl, color: scol(k), tip: `${STRATS[k] || k}: ${s.n} round trips, ${s.wins} winners (${Math.round(s.wins / s.n * 100)}%)\nbest ${cxs(s.best)} Cx, worst ${cxs(s.worst)} Cx` }));
+  set('m-stratpnl', card('target', 'PnL by strategy', 'closed round trips, Cx', divBars(rows, (v) => cxs(v)) + (rows.length ? `<div class="tbl-wrap" tabindex="0" style="margin-top:10px"><table><thead><tr><th scope="col">Strategy</th><th scope="col" class="num">Closed</th><th scope="col" class="num">Winners</th><th scope="col" class="num">Average</th></tr></thead><tbody>${Object.entries(S.byStrat).map(([k, s]) => `<tr><td>${stag(k)}</td><td class="num">${s.n}</td><td class="num">${Math.round(s.wins / s.n * 100)}%</td><td class="num ${cls(s.pnl)}">${cxs(s.pnl / s.n)}</td></tr>`).join('')}</tbody></table></div>` : '')));
+  set('m-trial', card('shield-check', 'Kill switches', '10 round trips', `<div class="list">${['top', 'crash', 'surv'].map((k) => {
+    const t = S.trial[k]; const st = t.disabled ? ['warning', 'disabled by the tuner'] : t.off ? ['critical', 'switched off'] : ['good', 'active'];
+    return `<div class="li"><span class="grow">${stag(k)}</span>${status(st[0], st[1])}<span class="mut" data-tip="round trips since the last re-arm">${t.n}/10 · <span class="${cls(t.pnl)}">${cxs(t.pnl)}</span></span></div>`;
+  }).join('')}<div class="li"><span class="grow">${stag('mom')}</span>${status(M.lastBreadth >= S.P.minBreadth ? 'good' : 'warning', M.lastBreadth >= S.P.minBreadth ? 'can enter' : 'waits for a rush')}</div></div>`));
   const br = M.lastBreadth ?? 0, mb = S.P.minBreadth ?? .6;
-  set('m-gate', card('gauge', 'Largeur du marché', 'part des actions à plus de 2 % sur 5 min', `<div style="font-size:28px;font-weight:600">${Math.round(br * 100)} %</div><div class="meter" style="margin:12px 0 6px" data-tip="seuil momentum ${Math.round(mb * 100)} %, sortie dump sous ${Math.round((S.P.dumpBreadth ?? .45) * 100)} %"><i style="width:${br * 100}%;background:${br >= mb ? 'var(--good)' : 'var(--s-top)'}"></i><b style="left:${mb * 100}%"></b></div><div class="note">Le momentum n'achète qu'au-dessus du trait (${Math.round(mb * 100)} %).</div>`));
-  set('m-top', card('target', 'Panier top', `${S.P.topN} tenus, sortie au rang ${S.P.topExit}`, M.ranked.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">#</th><th scope="col">Action</th><th scope="col" class="num">Prix</th><th scope="col" class="num">1 h</th><th scope="col">Dernière heure</th><th scope="col">Statut</th></tr></thead><tbody>${M.ranked.slice(0, 25).map((r) => `<tr${r.rank === S.P.topExit ? ' style="box-shadow:inset 0 -1px 0 var(--ink-2)"' : ''}><td class="mut">${r.rank}</td><td>${esc(r.name)}</td><td class="num">${cx(r.p)}</td><td class="num ${cls(r.ch60)}">${pct(r.ch60)}</td><td>${spark(r.spark)}</td><td>${r.held ? `<span class="tag">${ico('check')}${r.kind ? esc(STRATS[r.kind] || r.kind) : 'tenu'}</span>` : r.rank <= S.P.topN ? '<span class="mut">à acheter</span>' : ''}</td></tr>`).join('')}</tbody></table></div><div class="note">Le trait sous le rang ${S.P.topExit} marque la sortie. Revente vérifiée toutes les ${Math.round(S.P.topReb / 60e3)} min.</div>` : empty('Classement indisponible')));
-  set('m-crash', card('zap', 'Radar crash', `seuil ${pct(-(S.P.crashDrop || .25), 0)} entre deux scans`, M.crash.length ? `<div class="list">${M.crash.map((s) => { const hit = s.drop <= -(S.P.crashDrop || .25); return `<div class="li"><span class="grow">${esc(s.name)}</span>${hit ? status('serious', 'signal') : ''}<span class="${cls(s.drop)}" style="font-variant-numeric:tabular-nums">${pct(s.drop)}</span><span class="mut" style="width:64px;text-align:right">${cx(s.p)}</span></div>`; }).join('')}</div><div class="note">Plus fortes baisses depuis le scan précédent (15 s).</div>` : empty('Aucune variation mesurée')));
-  const tn = [['tune', 'Momentum', 'pnl'], ['tune_crash', 'Crash', 'total'], ['tune_surv', 'Survivants', 'total'], ['tune_top', 'Panier top', 'total']];
-  set('m-tunes', card('refresh-cw', 'Réglage automatique', 'rejeu toutes les 2 h', `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Stratégie</th><th scope="col">Quand</th><th scope="col" class="num">Actuel</th><th scope="col" class="num">Meilleur</th><th scope="col" class="num">Trades</th><th scope="col">Décision</th></tr></thead><tbody>${tn.map(([ev, label, key]) => {
-    const r = S.tunes[ev]; if (!r) return `<tr><td>${label}</td><td colspan="5" class="mut">pas encore lancé</td></tr>`;
+  set('m-gate', card('gauge', 'Market breadth', 'share of stocks up 2%+ over 5 min', `<div style="font-size:28px;font-weight:600">${Math.round(br * 100)}%</div><div class="meter" style="margin:12px 0 6px" data-tip="momentum gate ${Math.round(mb * 100)}%, dump exit under ${Math.round((S.P.dumpBreadth ?? .45) * 100)}%"><i style="width:${br * 100}%;background:${br >= mb ? 'var(--good)' : 'var(--s-top)'}"></i><b style="left:${mb * 100}%"></b></div><div class="note">Momentum only buys above the mark (${Math.round(mb * 100)}%).</div>`));
+  set('m-top', card('target', 'Top basket', `${S.P.topN} held, exit at rank ${S.P.topExit}`, M.ranked.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">#</th><th scope="col">Stock</th><th scope="col" class="num">Price</th><th scope="col" class="num">1 h</th><th scope="col">Last hour</th><th scope="col">Status</th></tr></thead><tbody>${M.ranked.slice(0, 25).map((r) => `<tr${r.rank === S.P.topExit ? ' style="box-shadow:inset 0 -1px 0 var(--ink-2)"' : ''}><td class="mut">${r.rank}</td><td>${esc(r.name)}</td><td class="num">${cx(r.p)}</td><td class="num ${cls(r.ch60)}">${pct(r.ch60)}</td><td>${spark(r.spark)}</td><td>${r.held ? `<span class="tag">${ico('check')}${r.kind ? esc(STRATS[r.kind] || r.kind) : 'held'}</span>` : r.rank <= S.P.topN ? '<span class="mut">to buy</span>' : ''}</td></tr>`).join('')}</tbody></table></div><div class="note">The line under rank ${S.P.topExit} marks the exit. Exits are checked every ${Math.round(S.P.topReb / 60e3)} min.</div>` : empty('Ranking unavailable')));
+  set('m-crash', card('zap', 'Crash radar', `trigger ${pct(-(S.P.crashDrop || .25), 0)} between two scans`, M.crash.length ? `<div class="list">${M.crash.map((s) => { const hit = s.drop <= -(S.P.crashDrop || .25); return `<div class="li"><span class="grow">${esc(s.name)}</span>${hit ? status('serious', 'signal') : ''}<span class="${cls(s.drop)}" style="font-variant-numeric:tabular-nums">${pct(s.drop)}</span><span class="mut" style="width:64px;text-align:right">${cx(s.p)}</span></div>`; }).join('')}</div><div class="note">Largest drops since the previous scan (15 s).</div>` : empty('No move measured')));
+  const tn = [['tune', 'Momentum', 'pnl'], ['tune_crash', 'Crash', 'total'], ['tune_surv', 'Survivors', 'total'], ['tune_top', 'Top basket', 'total']];
+  set('m-tunes', card('refresh-cw', 'Auto-tuning', 'replayed every 2 h', `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Strategy</th><th scope="col">When</th><th scope="col" class="num">Current</th><th scope="col" class="num">Best</th><th scope="col" class="num">Trades</th><th scope="col">Decision</th></tr></thead><tbody>${tn.map(([ev, label, key]) => {
+    const r = S.tunes[ev]; if (!r) return `<tr><td>${label}</td><td colspan="5" class="mut">not run yet</td></tr>`;
     const unit = ev === 'tune' ? (v) => cxs(v) : ev === 'tune_top' ? (v) => (v > 0 ? '+' : '') + nf0.format(v) + ' Cx' : (v) => pct(v, 0);
     const adopted = r.adopted || (r.adopt && Object.keys(r.adopt).length);
-    return `<tr><td>${label}</td><td class="mut">${hm(r.t)}</td><td class="num">${r.cur ? unit(r.cur[key]) : '-'}</td><td class="num">${r.best ? unit(r.best[key]) : '-'}</td><td class="num">${r.best?.n ?? r.cur?.n ?? '-'}</td><td>${adopted ? status('good', 'adopté ' + (r.adopt ? JSON.stringify(r.adopt).replace(/[{}"]/g, '').slice(0, 40) : '')) : '<span class="mut">gardé</span>'}</td></tr>`;
-  }).join('')}</tbody></table></div><div class="note">Momentum en Cx sur 6 h, crash et survivants en somme de rendements sur 24 h, panier en Cx sur 24 h.</div>`));
-  const PK = [['topN', 'Panier, taille', (v) => v], ['topExit', 'Panier, rang de sortie', (v) => v], ['topReb', 'Panier, vérif.', (v) => Math.round(v / 60e3) + ' min'], ['topSize', 'Panier, mise', (v) => Math.round(v * 100) + ' %'], ['crashDrop', 'Crash, chute', (v) => Math.round(v * 100) + ' %'], ['crashFlat', 'Crash, pump max avant', (v) => Math.round(v * 100) + ' %'], ['dipHold', 'Crash, tenue', (v) => Math.round(v / 60e3) + ' min'], ['runStart', 'Run, déclenchement', (v) => '+' + Math.round((v - 1) * 100) + ' %'], ['runTrail', 'Run, stop suiveur', (v) => Math.round((1 - v) * 100) + ' %'], ['maxImpact', 'Impact max', (v) => (v * 100).toFixed(1).replace('.', ',') + ' %'], ['survTop', 'Survivants', (v) => v || 'coupé'], ['minBreadth', 'Momentum, largeur', (v) => Math.round(v * 100) + ' %'], ['size', 'Mise par ordre', (v) => Math.round(v * 100) + ' %']];
-  set('m-params', card('list', 'Paramètres', 'params.json, rechargé à chaud', `<dl class="kv">${PK.filter(([k]) => S.P[k] != null).map(([k, l, f]) => `<dt>${l}</dt><dd>${esc(f(S.P[k]))}</dd>`).join('')}</dl>`));
+    return `<tr><td>${label}</td><td class="mut">${hm(r.t)}</td><td class="num">${r.cur ? unit(r.cur[key]) : '-'}</td><td class="num">${r.best ? unit(r.best[key]) : '-'}</td><td class="num">${r.best?.n ?? r.cur?.n ?? '-'}</td><td>${adopted ? status('good', 'adopted ' + (r.adopt ? JSON.stringify(r.adopt).replace(/[{}"]/g, '').slice(0, 40) : '')) : '<span class="mut">kept</span>'}</td></tr>`;
+  }).join('')}</tbody></table></div><div class="note">Momentum in Cx over 6 h, crash and survivors as summed returns over 24 h, top basket in Cx over 24 h.</div>`));
+  const PK = [['topN', 'Basket size', (v) => v], ['topExit', 'Basket exit rank', (v) => v], ['topReb', 'Basket exit check', (v) => Math.round(v / 60e3) + ' min'], ['topSize', 'Basket stake', (v) => Math.round(v * 100) + '%'], ['crashDrop', 'Crash drop', (v) => Math.round(v * 100) + '%'], ['crashFlat', 'Crash, max pump before', (v) => Math.round(v * 100) + '%'], ['dipHold', 'Crash hold', (v) => Math.round(v / 60e3) + ' min'], ['runStart', 'Run trigger', (v) => '+' + Math.round((v - 1) * 100) + '%'], ['runTrail', 'Run trailing stop', (v) => Math.round((1 - v) * 100) + '%'], ['maxImpact', 'Max impact', (v) => (v * 100).toFixed(1) + '%'], ['survTop', 'Survivors', (v) => v || 'off'], ['minBreadth', 'Momentum breadth', (v) => Math.round(v * 100) + '%'], ['size', 'Stake per order', (v) => Math.round(v * 100) + '%']];
+  set('m-params', card('list', 'Parameters', 'params.json, hot-reloaded', `<dl class="kv">${PK.filter(([k]) => S.P[k] != null).map(([k, l, f]) => `<dt>${l}</dt><dd>${esc(f(S.P[k]))}</dd>`).join('')}</dl>`));
   const trips = S.trips.filter((t) => t.pct != null);
   const bins = [-.5, -.3, -.2, -.1, -.05, 0, .05, .1, .2, .3, .5, Infinity], hist = bins.slice(0, -1).map((lo, i) => ({ lo, hi: bins[i + 1], n: 0 }));
   for (const t of trips) { const b = hist.find((h) => t.pct >= h.lo && t.pct < h.hi) || (t.pct < -.5 ? hist[0] : null); if (b) b.n++; }
-  set('m-dist', card('chart-column', 'Distribution', 'allers-retours, % net', trips.length ? columns({ bars: hist.map((h) => ({ t: 0, v: h.n, color: h.lo >= 0 ? 'var(--div-pos)' : 'var(--div-neg)', tip: `${pct(h.lo, 0)} à ${isFinite(h.hi) ? pct(h.hi, 0) : 'plus'}: ${h.n} trades`, lo: h.lo })), height: 150, xLabel: (b) => pct(b.lo, 0), W: wOf('m-dist'), label: 'distribution des allers-retours' }) + `<div class="note">Bleu gagnant, rouge perdant. ${trips.filter((t) => t.pct > 0).length} sur ${trips.length} gagnants.</div>` : empty('Aucun aller-retour clos')));
+  set('m-dist', card('chart-column', 'Distribution', 'round trips, net %', trips.length ? columns({ bars: hist.map((h) => ({ t: 0, v: h.n, color: h.lo >= 0 ? 'var(--div-pos)' : 'var(--div-neg)', tip: `${pct(h.lo, 0)} to ${isFinite(h.hi) ? pct(h.hi, 0) : 'more'}: ${h.n} trades`, lo: h.lo })), height: 150, xLabel: (b) => pct(b.lo, 0), W: wOf('m-dist'), label: 'round trip distribution' }) + `<div class="note">Blue wins, red losses. ${trips.filter((t) => t.pct > 0).length} of ${trips.length} won.</div>` : empty('No closed round trip yet')));
   const ofs = ['all', 'buy', 'sell', 'fail'];
   const ordersF = S.orders.filter((o) => ui.orderFilter === 'all' || (ui.orderFilter === 'fail' ? o.status !== 200 : o.side === ui.orderFilter && o.status === 200));
-  set('m-orders', card('scroll-text', 'Journal des ordres', `${S.orders.length} derniers`, `<div class="chips" data-group="orderFilter">${ofs.map((f) => `<button class="chip" data-v="${f}" aria-pressed="${ui.orderFilter === f}">${{ all: 'Tous', buy: 'Achats', sell: 'Ventes', fail: 'Refusés' }[f]}</button>`).join('')}</div>` + (ordersF.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Heure</th><th scope="col">Sens</th><th scope="col">Action</th><th scope="col">Raison</th><th scope="col" class="num">Montant</th><th scope="col" class="num">Impact</th><th scope="col">Statut</th></tr></thead><tbody>${ordersF.slice(0, 80).map((o) => `<tr><td class="mut">${hms(o.t)}</td><td>${o.side === 'buy' ? `<span class="tag">${ico('arrow-up-right')}achat</span>` : `<span class="tag">${ico('arrow-down-right')}vente</span>`}</td><td>${esc(o.name)}</td><td class="mut">${esc(o.why)}</td><td class="num">${cx(o.cash)}</td><td class="num mut">${o.pb && o.pa ? pct(o.pa / o.pb - 1) : '-'}</td><td>${o.status === 200 ? '<span class="mut">200</span>' : status('critical', `${o.status} ${o.msg || ''}`)}</td></tr>`).join('')}</tbody></table></div>` : empty('Aucun ordre dans ce filtre'))));
-  set('m-trips', card('check', 'Allers-retours', `${S.trips.length} clos`, S.trips.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Fermé</th><th scope="col">Action</th><th scope="col">Stratégie</th><th scope="col">Sortie</th><th scope="col" class="num">Durée</th><th scope="col" class="num">PnL</th><th scope="col" class="num">%</th></tr></thead><tbody>${S.trips.slice(0, 80).map((t) => `<tr><td class="mut">${hm(t.t1)}</td><td>${esc(t.name)}</td><td>${stag(t.strat)}</td><td class="mut">${esc(t.exit)}</td><td class="num mut">${t.t0 ? dur(t.t1 - t.t0) : '-'}</td><td class="num ${cls(t.pnl)}">${cxs(t.pnl)}</td><td class="num ${cls(t.pct)}">${pct(t.pct)}</td></tr>`).join('')}</tbody></table></div>` : empty('Aucun aller-retour clos')));
+  set('m-orders', card('scroll-text', 'Order log', `latest ${S.orders.length}`, `<div class="chips" data-group="orderFilter">${ofs.map((f) => `<button class="chip" data-v="${f}" aria-pressed="${ui.orderFilter === f}">${{ all: 'All', buy: 'Buys', sell: 'Sells', fail: 'Rejected' }[f]}</button>`).join('')}</div>` + (ordersF.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Time</th><th scope="col">Side</th><th scope="col">Stock</th><th scope="col">Reason</th><th scope="col" class="num">Amount</th><th scope="col" class="num">Impact</th><th scope="col">Status</th></tr></thead><tbody>${ordersF.slice(0, 80).map((o) => `<tr><td class="mut">${hms(o.t)}</td><td>${o.side === 'buy' ? `<span class="tag">${ico('arrow-up-right')}buy</span>` : `<span class="tag">${ico('arrow-down-right')}sell</span>`}</td><td>${esc(o.name)}</td><td class="mut">${esc(o.why)}</td><td class="num">${cx(o.cash)}</td><td class="num mut">${o.pb && o.pa ? pct(o.pa / o.pb - 1) : '-'}</td><td>${o.status === 200 ? '<span class="mut">200</span>' : status('critical', `${o.status} ${o.msg || ''}`)}</td></tr>`).join('')}</tbody></table></div>` : empty('No order in this filter'))));
+  set('m-trips', card('check', 'Round trips', `${S.trips.length} closed`, S.trips.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Closed</th><th scope="col">Stock</th><th scope="col">Strategy</th><th scope="col">Exit</th><th scope="col" class="num">Held</th><th scope="col" class="num">PnL</th><th scope="col" class="num">%</th></tr></thead><tbody>${S.trips.slice(0, 80).map((t) => `<tr><td class="mut">${hm(t.t1)}</td><td>${esc(t.name)}</td><td>${stag(t.strat)}</td><td class="mut">${esc(t.exit)}</td><td class="num mut">${t.t0 ? dur(t.t1 - t.t0) : '-'}</td><td class="num ${cls(t.pnl)}">${cxs(t.pnl)}</td><td class="num ${cls(t.pct)}">${pct(t.pct)}</td></tr>`).join('')}</tbody></table></div>` : empty('No closed round trip yet')));
 
-  // Marché
-  set('m-breadth', card('activity', 'Largeur dans le temps', '24 h, par minute', lineChart({ series: [{ label: 'Largeur', color: 'var(--s-top)', pts: M.breadth.map(([t, v]) => [t, v * 100]) }], refs: [{ v: mb * 100, label: `momentum ${Math.round(mb * 100)} %` }], yFmt: (v) => Math.round(v) + ' %', height: 190, yMin: 0, W: wOf('m-breadth') })));
-  set('m-mstats', card('activity', 'Activité', 'en direct', `<div class="tiles">${tile('activity', 'Trades / min', nf0.format(M.tpm), '5 dernières min')}${tile('users', 'Wallets actifs', nf0.format(M.wallets), 'dernière heure')}${tile('coins', 'Volume 1 h', nf0.format(M.cxHour / 100) + ' Cx', 'achats et ventes')}</div><div class="note">La tape arrive par lots de 3 min.</div>`));
-  set('m-volume', card('chart-column', 'Volume par 10 min', 'Cx échangés, 24 h', columns({ bars: M.volume.map((v) => ({ t: v.t, v: v.cx / 100, tip: `${hm(v.t)}\n${nf0.format(v.cx / 100)} Cx, ${v.n} trades\n${v.users} wallets, ${Math.round(v.buys / Math.max(1, v.n) * 100)} % d'achats` })), height: 170, W: wOf('m-volume'), label: 'volume par 10 minutes' })));
-  set('m-counts', card('database', 'Actions', '', `<dl class="kv"><dt>Cotées</dt><dd>${M.counts.listed}</dd><dt>Vivantes et actives</dt><dd>${M.counts.active}</dd><dt>Joueur mort</dt><dd>${M.counts.dead}</dd><dt>Réglées (disparues)</dt><dd>${M.counts.settled}</dd></dl>`));
-  const mv = (list) => list.length ? `<div class="list">${list.map((s) => `<div class="li"><span class="grow">${esc(s.name)}</span><span class="${cls(s.ch15)}" style="font-variant-numeric:tabular-nums">${pct(s.ch15)}</span><span class="mut" style="width:64px;text-align:right">${cx(s.p)}</span></div>`).join('')}</div>` : empty('Pas encore de recul');
-  set('m-up', card('trending-up', 'Plus fortes hausses', '15 min', mv(M.up.filter((s) => s.ch15 > 0))));
-  set('m-down', card('trending-down', 'Plus fortes baisses', '15 min', mv(M.down.filter((s) => s.ch15 < 0))));
-  set('m-whales', card('flame', 'Baleines', 'plus gros trades, 1 h', M.whales.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Heure</th><th scope="col">Action</th><th scope="col">Sens</th><th scope="col" class="num">Montant</th><th scope="col" class="num">Impact</th></tr></thead><tbody>${M.whales.map((r) => `<tr><td class="mut">${hm(r.t)}</td><td>${esc(r.name)}</td><td>${r.side === 'b' ? 'achat' : 'vente'}</td><td class="num">${cx(r.c)}</td><td class="num ${cls(r.imp)}">${pct(r.imp)}</td></tr>`).join('')}</tbody></table></div>` : empty('Aucun trade cette heure')));
-  set('m-heat', card('layers', 'Carte du marché', 'vivantes, triées par prix, couleur = 1 h', M.heat.length ? `<div class="heat">${M.heat.map((s) => `<div style="background:${heatBg(s.ch60)}" data-tip="${esc(`${s.name}\nprix ${cx(s.p)}\n15 min ${pct(s.ch15)}\n1 h ${pct(s.ch60)}`)}"><b>${esc(s.name)}</b><span>${cx(s.p)} · ${pct(s.ch60, 0)}</span></div>`).join('')}</div><div class="legend"><span><i style="background:var(--div-neg);height:8px;width:8px"></i>baisse</span><span><i style="background:var(--div-mid);height:8px;width:8px"></i>stable</span><span><i style="background:var(--div-pos);height:8px;width:8px"></i>hausse</span></div>` : empty('Marché indisponible')));
-  set('m-feed', card('radio', 'Fil des trades', 'derniers reçus', M.feed.length ? `<div class="list" tabindex="0" style="max-height:420px;overflow:auto">${M.feed.map((r) => `<div class="li"><time>${hms(r.t)}</time><span class="grow">${esc(r.name)}</span><span class="mut">${r.side === 'b' ? 'achat' : 'vente'}</span><span style="width:64px;text-align:right;font-variant-numeric:tabular-nums">${cx(r.c)}</span><span class="${cls(r.imp)}" style="width:62px;text-align:right;font-variant-numeric:tabular-nums">${pct(r.imp)}</span></div>`).join('')}</div>` : empty('Aucun trade reçu')));
+  // Market
+  set('m-breadth', card('activity', 'Breadth over time', '24 h, per minute', lineChart({ series: [{ label: 'Breadth', color: 'var(--s-top)', pts: M.breadth.map(([t, v]) => [t, v * 100]) }], refs: [{ v: mb * 100, label: `momentum ${Math.round(mb * 100)}%` }], yFmt: (v) => Math.round(v) + '%', height: 190, yMin: 0, W: wOf('m-breadth') })));
+  set('m-mstats', card('activity', 'Activity', 'live', `<div class="tiles">${tile('activity', 'Trades / min', nf0.format(M.tpm), 'last 5 min')}${tile('users', 'Active wallets', nf0.format(M.wallets), 'last hour')}${tile('coins', 'Volume 1 h', nf0.format(M.cxHour / 100) + ' Cx', 'buys and sells')}</div><div class="note">The tape arrives in 3-minute batches.</div>`));
+  set('m-volume', card('chart-column', 'Volume per 10 min', 'Cx traded, 24 h', columns({ bars: M.volume.map((v) => ({ t: v.t, v: v.cx / 100, tip: `${hm(v.t)}\n${nf0.format(v.cx / 100)} Cx, ${v.n} trades\n${v.users} wallets, ${Math.round(v.buys / Math.max(1, v.n) * 100)}% buys` })), height: 170, W: wOf('m-volume'), label: 'volume per 10 minutes' })));
+  set('m-counts', card('database', 'Stocks', '', `<dl class="kv"><dt>Listed</dt><dd>${M.counts.listed}</dd><dt>Alive and active</dt><dd>${M.counts.active}</dd><dt>Contestant dead</dt><dd>${M.counts.dead}</dd><dt>Settled (gone)</dt><dd>${M.counts.settled}</dd></dl>`));
+  const mv = (list) => list.length ? `<div class="list">${list.map((s) => `<div class="li"><span class="grow">${esc(s.name)}</span><span class="${cls(s.ch15)}" style="font-variant-numeric:tabular-nums">${pct(s.ch15)}</span><span class="mut" style="width:64px;text-align:right">${cx(s.p)}</span></div>`).join('')}</div>` : empty('Not enough history yet');
+  set('m-up', card('trending-up', 'Top gainers', '15 min', mv(M.up.filter((s) => s.ch15 > 0))));
+  set('m-down', card('trending-down', 'Top losers', '15 min', mv(M.down.filter((s) => s.ch15 < 0))));
+  set('m-whales', card('flame', 'Whales', 'largest trades, 1 h', M.whales.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Time</th><th scope="col">Stock</th><th scope="col">Side</th><th scope="col" class="num">Amount</th><th scope="col" class="num">Impact</th></tr></thead><tbody>${M.whales.map((r) => `<tr><td class="mut">${hm(r.t)}</td><td>${esc(r.name)}</td><td>${r.side === 'b' ? 'buy' : 'sell'}</td><td class="num">${cx(r.c)}</td><td class="num ${cls(r.imp)}">${pct(r.imp)}</td></tr>`).join('')}</tbody></table></div>` : empty('No trade this hour')));
+  set('m-heat', card('layers', 'Market map', 'alive stocks by price, color = 1 h change', M.heat.length ? `<div class="heat">${M.heat.map((s) => `<div style="background:${heatBg(s.ch60)}" data-tip="${esc(`${s.name}\nprice ${cx(s.p)}\n15 min ${pct(s.ch15)}\n1 h ${pct(s.ch60)}`)}"><b>${esc(s.name)}</b><span>${cx(s.p)} · ${pct(s.ch60, 0)}</span></div>`).join('')}</div><div class="legend"><span><i style="background:var(--div-neg);height:8px;width:8px"></i>down</span><span><i style="background:var(--div-mid);height:8px;width:8px"></i>flat</span><span><i style="background:var(--div-pos);height:8px;width:8px"></i>up</span></div>` : empty('Market unavailable')));
+  set('m-feed', card('radio', 'Trade feed', 'latest received', M.feed.length ? `<div class="list" tabindex="0" style="max-height:420px;overflow:auto">${M.feed.map((r) => `<div class="li"><time>${hms(r.t)}</time><span class="grow">${esc(r.name)}</span><span class="mut">${r.side === 'b' ? 'buy' : 'sell'}</span><span style="width:64px;text-align:right;font-variant-numeric:tabular-nums">${cx(r.c)}</span><span class="${cls(r.imp)}" style="width:62px;text-align:right;font-variant-numeric:tabular-nums">${pct(r.imp)}</span></div>`).join('')}</div>` : empty('No trade received')));
 
-  // Jeu
-  set('m-alive', card('heart-pulse', 'Joueurs', 'flux santé de la carte', `<div class="hero"><span class="big" style="font-size:36px">${G.alive}<small>en vie</small></span><span class="note">${G.tracked} suivis, ${G.deaths} morts enregistrées</span><span class="note">${G.outside.length} hors de la zone en ce moment</span></div>`));
-  set('m-deathsh', card('skull', 'Morts par heure', '36 h', columns({ bars: G.perHour.map(([t, n]) => ({ t, v: n, color: 'var(--s-crash)', tip: `${hm(t)}: ${n} morts` })), height: 160, W: wOf('m-deathsh'), label: 'morts par heure' })));
+  // Game
+  set('m-alive', card('heart-pulse', 'Contestants', 'map health feed', `<div class="hero"><span class="big" style="font-size:36px">${G.alive}<small>alive</small></span><span class="note">${G.tracked} tracked, ${G.deaths} deaths logged</span><span class="note">${G.outside.length} outside the zone right now</span></div>`));
+  set('m-deathsh', card('skull', 'Deaths per hour', '36 h', columns({ bars: G.perHour.map(([t, n]) => ({ t, v: n, color: 'var(--s-crash)', tip: `${hm(t)}: ${n} deaths` })), height: 160, W: wOf('m-deathsh'), label: 'deaths per hour' })));
   const causes = Object.entries(G.causes).sort((a, b) => b[1] - a[1]), cm = Math.max(1, ...causes.map((c) => c[1]));
-  set('m-causes', card('crosshair', 'Causes', 'source de la mort', causes.length ? `<div class="hbars">${causes.map(([k, n]) => `<div class="hb"><span class="lab">${esc(k)}</span><span class="track" style="background:var(--surface-2);border-radius:4px"><i style="left:0;width:${n / cm * 100}%;background:var(--s-crash);border-radius:0 4px 4px 0"></i></span><span class="val">${n}</span></div>`).join('')}</div>` : empty('Aucune mort')));
-  set('m-deaths', card('skull', 'Dernières morts', 'l\'action perd 20 % 30 s à 2 min après', G.lastDeaths.length ? `<div class="list" tabindex="0" style="max-height:360px;overflow:auto">${G.lastDeaths.map((d) => `<div class="li"><time>${hm(d.t)}</time><span class="grow">${esc(d.u)}</span><span class="mut">${esc(d.source || d.cause || '')}</span></div>`).join('')}</div>` : empty('Aucune mort')));
-  set('m-lowhp', card('heart-pulse', 'PV les plus bas', 'le moteur n\'achète pas sous 40 %', G.lowHp.length ? `<div class="list">${G.lowHp.map((h) => { const v = h.hp / h.max; return `<div class="li"><span class="grow">${esc(h.u)}</span>${h.out ? `<span class="tag mut">${ico('map-pin')}hors zone</span>` : ''}<span class="hpbar"><i style="width:${v * 100}%;background:var(--${v < .25 ? 'critical' : v < .4 ? 'warning' : 'good'})"></i></span><span class="mut" style="width:56px;text-align:right">${h.hp}/${h.max}</span></div>`; }).join('')}</div>` : empty(E.hpFeed === false ? 'Flux santé coupé (blackout en jeu)' : 'Pas de données santé')));
-  set('m-outside', card('map-pin', 'Hors zone', 'perdent des PV', G.outside.length ? `<div class="list">${G.outside.slice(0, 15).map((h) => `<div class="li"><span class="grow">${esc(h.u)}</span><span class="mut">${h.hp}/${h.max}</span></div>`).join('')}</div>` : empty('Personne hors zone')));
-  set('m-settled', card('hourglass', 'Règlements', 'actions disparues de l\'API, valeur de règlement non publique', G.settled.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Vu disparu</th><th scope="col">Action</th><th scope="col" class="num">Dernier prix</th><th scope="col">Éliminé</th><th scope="col">Réglé</th></tr></thead><tbody>${G.settled.map((s) => `<tr><td class="mut">${hm(s.t)}</td><td>${esc(s.name)}</td><td class="num">${cx(s.price)}</td><td class="mut">${hm(Date.parse(s.eliminated_at))}</td><td class="mut">${hm(Date.parse(s.settles_at))}</td></tr>`).join('')}</tbody></table></div>` : empty('Aucun règlement observé')));
+  set('m-causes', card('crosshair', 'Causes', 'source of the death', causes.length ? `<div class="hbars">${causes.map(([k, n]) => `<div class="hb"><span class="lab">${esc(k)}</span><span class="track" style="background:var(--surface-2);border-radius:4px"><i style="left:0;width:${n / cm * 100}%;background:var(--s-crash);border-radius:0 4px 4px 0"></i></span><span class="val">${n}</span></div>`).join('')}</div>` : empty('No death yet')));
+  set('m-deaths', card('skull', 'Latest deaths', 'the stock loses 20% 30 s to 2 min later', G.lastDeaths.length ? `<div class="list" tabindex="0" style="max-height:360px;overflow:auto">${G.lastDeaths.map((d) => `<div class="li"><time>${hm(d.t)}</time><span class="grow">${esc(d.u)}</span><span class="mut">${esc(d.source || d.cause || '')}</span></div>`).join('')}</div>` : empty('No death yet')));
+  set('m-lowhp', card('heart-pulse', 'Lowest HP', 'the engine does not buy under 40%', G.lowHp.length ? `<div class="list">${G.lowHp.map((h) => { const v = h.hp / h.max; return `<div class="li"><span class="grow">${esc(h.u)}</span>${h.out ? `<span class="tag mut">${ico('map-pin')}outside</span>` : ''}<span class="hpbar"><i style="width:${v * 100}%;background:var(--${v < .25 ? 'critical' : v < .4 ? 'warning' : 'good'})"></i></span><span class="mut" style="width:56px;text-align:right">${h.hp}/${h.max}</span></div>`; }).join('')}</div>` : empty(E.hpFeed === false ? 'Health feed down (in-game blackout)' : 'No health data')));
+  set('m-outside', card('map-pin', 'Outside the zone', 'losing HP', G.outside.length ? `<div class="list">${G.outside.slice(0, 15).map((h) => `<div class="li"><span class="grow">${esc(h.u)}</span><span class="mut">${h.hp}/${h.max}</span></div>`).join('')}</div>` : empty('Nobody outside the zone')));
+  set('m-settled', card('hourglass', 'Settlements', 'stocks gone from the API, settlement value not public', G.settled.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Seen gone</th><th scope="col">Stock</th><th scope="col" class="num">Last price</th><th scope="col">Eliminated</th><th scope="col">Settled</th></tr></thead><tbody>${G.settled.map((s) => `<tr><td class="mut">${hm(s.t)}</td><td>${esc(s.name)}</td><td class="num">${cx(s.price)}</td><td class="mut">${hm(Date.parse(s.eliminated_at))}</td><td class="mut">${hm(Date.parse(s.settles_at))}</td></tr>`).join('')}</tbody></table></div>` : empty('No settlement seen yet')));
 
-  // Moteur
-  const sOk = (ms, lim) => ms == null ? ['critical', 'jamais'] : ms > lim ? ['warning', `il y a ${ago(ms)}`] : ['good', `il y a ${ago(ms)}`];
+  // Engine
+  const sOk = (ms, lim) => ms == null ? ['critical', 'never'] : ms > lim ? ['warning', `${ago(ms)} ago`] : ['good', `${ago(ms)} ago`];
   const a = sOk(E.okAge, 60e3), b = sOk(E.scanAge, 60e3);
-  set('m-health', card('server', 'Santé', `PID ${E.pid ?? '-'}`, `<div class="list"><div class="li"><span class="grow">Dernier /me OK</span>${status(a[0], a[1])}</div><div class="li"><span class="grow">Dernier scan</span>${status(b[0], b[1])}</div><div class="li"><span class="grow">Session</span>${E.authLostAt ? status('critical', `perdue depuis ${ago(now - E.authLostAt)}`) : status('good', 'valide')}</div><div class="li"><span class="grow">Démarré</span><span class="mut">${E.startedAt ? `il y a ${dur(now - E.startedAt)}` : '-'}</span></div></div><div class="note">Watchdog : redémarrage si rien ne marche 5 min, ou session perdue 3 min.</div>`));
+  set('m-health', card('server', 'Health', `PID ${E.pid ?? '-'}`, `<div class="list"><div class="li"><span class="grow">Last /me OK</span>${status(a[0], a[1])}</div><div class="li"><span class="grow">Last scan</span>${status(b[0], b[1])}</div><div class="li"><span class="grow">Session</span>${E.authLostAt ? status('critical', `lost for ${ago(now - E.authLostAt)}`) : status('good', 'valid')}</div><div class="li"><span class="grow">Started</span><span class="mut">${E.startedAt ? `${dur(now - E.startedAt)} ago` : '-'}</span></div></div><div class="note">Watchdog: restart when nothing works for 5 min, or the session is lost for 3 min.</div>`));
   const blocked = E.blockedUntil > now;
-  set('m-api', card('zap', 'API', '2,5 req/s maximum', `<div class="list"><div class="li"><span class="grow">État</span>${blocked ? status('warning', `pause ${ago(E.blockedUntil - now)}`) : status('good', 'libre')}</div><div class="li"><span class="grow">Recul actuel</span><span class="mut">${E.backoff ? ago(E.backoff) : 'aucun'}</span></div><div class="li"><span class="grow">Incidents 1 h</span><span class="${E.errors ? 'neg' : 'mut'}">${E.errors}</span></div></div>`));
-  set('m-hpfeed', card('radio', 'Flux santé', 'carte du jeu', `<div class="list"><div class="li"><span class="grow">Flux</span>${E.hpFeed ? status('good', 'reçu') : status('warning', 'coupé')}</div><div class="li"><span class="grow">Joueurs suivis</span><span class="mut">${G.tracked}</span></div></div><div class="note">Coupé pendant les blackouts en jeu. Le moteur garde les morts connues.</div>`));
-  set('m-end', card('timer', 'Fin de l\'event', E.end ? new Date(E.end).toLocaleString('fr-FR') : '', `<div class="hero"><span class="big" style="font-size:30px">${E.end ? dur(E.end - now) : '-'}</span><span class="note">Le moteur s'arrête seul à cette date.</span></div>`));
-  set('m-restarts', card('refresh-cw', 'Démarrages et watchdog', '24 h', E.restarts.length ? `<div class="list" tabindex="0" style="max-height:260px;overflow:auto">${E.restarts.slice().reverse().map((r) => `<div class="li"><time>${hms(r.t)}</time><span class="grow">${r.ev === 'start' ? 'démarrage' : r.ev === 'restart' ? 'relancé par le superviseur' : 'coupé par le watchdog'}</span><span class="mut">${esc(r.ev === 'start' ? '' : r.d)}</span></div>`).join('')}</div>` : empty('Aucun démarrage en 24 h')));
-  set('m-kick', card('megaphone', 'Annonces Kick', 'une par ordre', `<dl class="kv"><dt>Envoyées</dt><dd>${E.kick.ok}</dd><dt>Refusées</dt><dd class="${E.kick.err ? 'neg' : ''}">${E.kick.err}</dd></dl>${E.kick.last.length ? `<div class="list" style="margin-top:8px">${E.kick.last.slice(-6).reverse().map((k) => `<div class="li"><time>${hm(k.t)}</time><span class="grow">${esc(k.name)}</span>${k.ok ? status('good', 'envoyée') : status('critical', k.why)}</div>`).join('')}</div>` : ''}`));
+  set('m-api', card('zap', 'API', '2.5 req/s at most', `<div class="list"><div class="li"><span class="grow">State</span>${blocked ? status('warning', `paused ${ago(E.blockedUntil - now)}`) : status('good', 'clear')}</div><div class="li"><span class="grow">Current back-off</span><span class="mut">${E.backoff ? ago(E.backoff) : 'none'}</span></div><div class="li"><span class="grow">Incidents 1 h</span><span class="${E.errors ? 'neg' : 'mut'}">${E.errors}</span></div></div>`));
+  set('m-hpfeed', card('radio', 'Health feed', 'game map', `<div class="list"><div class="li"><span class="grow">Feed</span>${E.hpFeed ? status('good', 'receiving') : status('warning', 'down')}</div><div class="li"><span class="grow">Contestants tracked</span><span class="mut">${G.tracked}</span></div></div><div class="note">Down during in-game blackouts. The engine keeps the deaths it knows.</div>`));
+  set('m-end', card('timer', 'Event end', E.end ? new Date(E.end).toLocaleString('en-GB') : '', `<div class="hero"><span class="big" style="font-size:30px">${E.end ? dur(E.end - now) : '-'}</span><span class="note">The engine stops by itself at that time.</span></div>`));
+  set('m-restarts', card('refresh-cw', 'Starts and watchdog', '24 h', E.restarts.length ? `<div class="list" tabindex="0" style="max-height:260px;overflow:auto">${E.restarts.slice().reverse().map((r) => `<div class="li"><time>${hms(r.t)}</time><span class="grow">${r.ev === 'start' ? 'start' : r.ev === 'restart' ? 'restarted by the supervisor' : 'stopped by the watchdog'}</span><span class="mut">${esc(r.ev === 'start' ? '' : r.d)}</span></div>`).join('')}</div>` : empty('No start in 24 h')));
+  set('m-kick', card('megaphone', 'Kick announcements', 'one per order', `<dl class="kv"><dt>Sent</dt><dd>${E.kick.ok}</dd><dt>Rejected</dt><dd class="${E.kick.err ? 'neg' : ''}">${E.kick.err}</dd></dl>${E.kick.last.length ? `<div class="list" style="margin-top:8px">${E.kick.last.slice(-6).reverse().map((k) => `<div class="li"><time>${hm(k.t)}</time><span class="grow">${esc(k.name)}</span>${k.ok ? status('good', 'sent') : status('critical', k.why)}</div>`).join('')}</div>` : ''}`));
   const files = Object.entries(E.files).sort((x, y) => y[1] - x[1]).slice(0, 8);
-  set('m-files', card('database', 'Fichiers', 'local, dossier du projet', `<dl class="kv">${files.map(([f, s]) => `<dt>${esc(f)}</dt><dd>${s > 1e6 ? (s / 1e6).toFixed(1).replace('.', ',') + ' Mo' : Math.round(s / 1e3) + ' Ko'}</dd>`).join('')}</dl>`));
+  set('m-files', card('database', 'Files', 'local, project folder', `<dl class="kv">${files.map(([f, s]) => `<dt>${esc(f)}</dt><dd>${s > 1e6 ? (s / 1e6).toFixed(1) + ' MB' : Math.round(s / 1e3) + ' KB'}</dd>`).join('')}</dl>`));
   const groups = { all: () => true, orders: (e) => e.ev.startsWith('stock-market'), tune: (e) => e.ev.startsWith('tune') || e.ev.endsWith('_on') || e.ev.endsWith('_off') || e.ev === 'params_reload', health: (e) => /start|restart|watchdog|auth|blocked|err|profile_retry|hp_feed/.test(e.ev) };
   const evs = S.events.filter(groups[ui.evFilter]);
-  set('m-events', card('list', 'Journal des événements', 'trades.jsonl hors scans', `<div class="chips" data-group="evFilter">${Object.keys(groups).map((g) => `<button class="chip" data-v="${g}" aria-pressed="${ui.evFilter === g}">${{ all: 'Tout', orders: 'Ordres', tune: 'Réglages', health: 'Santé' }[g]}</button>`).join('')}</div>` + (evs.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Heure</th><th scope="col">Événement</th><th scope="col">Détail</th></tr></thead><tbody>${evs.slice(0, 150).map((e) => `<tr><td class="mut">${hms(e.t)}</td><td>${esc(e.ev)}</td><td class="mut" style="white-space:normal">${esc(e.d)}</td></tr>`).join('')}</tbody></table></div>` : empty('Aucun événement dans ce filtre'))));
+  set('m-events', card('list', 'Event log', 'trades.jsonl without scans', `<div class="chips" data-group="evFilter">${Object.keys(groups).map((g) => `<button class="chip" data-v="${g}" aria-pressed="${ui.evFilter === g}">${{ all: 'All', orders: 'Orders', tune: 'Tuning', health: 'Health' }[g]}</button>`).join('')}</div>` + (evs.length ? `<div class="tbl-wrap" tabindex="0"><table><thead><tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead><tbody>${evs.slice(0, 150).map((e) => `<tr><td class="mut">${hms(e.t)}</td><td>${esc(e.ev)}</td><td class="mut" style="white-space:normal">${esc(e.d)}</td></tr>`).join('')}</tbody></table></div>` : empty('No event in this filter'))));
 }
 
 document.addEventListener('click', (ev) => {
@@ -493,13 +493,13 @@ const dot = document.getElementById('livedot');
 function showErr(t) { const e = document.getElementById('err'); e.style.display = t ? 'flex' : 'none'; document.getElementById('err-text').textContent = t || ''; }
 function connect() {
   const es = new EventSource('/api/events');
-  es.addEventListener('state', (m) => { S = JSON.parse(m.data); S._recv = Date.now(); dot.classList.add('on'); dot.title = 'connecté'; showErr(S.error ? `Erreur de calcul côté serveur : ${S.error}` : ''); if (!S.error) render(); });
+  es.addEventListener('state', (m) => { S = JSON.parse(m.data); S._recv = Date.now(); dot.classList.add('on'); dot.title = 'connected'; showErr(S.error ? `Server-side error: ${S.error}` : ''); if (!S.error) render(); });
   es.addEventListener('reload', () => location.reload());
-  es.onerror = () => { dot.classList.remove('on'); dot.title = 'déconnecté'; showErr('Connexion au moteur perdue. Nouvel essai automatique.'); };
+  es.onerror = () => { dot.classList.remove('on'); dot.title = 'disconnected'; showErr('Lost the connection to the engine. Retrying by itself.'); };
 }
 connect();
 let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 150); });
-setInterval(() => { if (S?.engine) set('updated', `données il y a ${ago(S.engine.liveAge + (Date.now() - S._recv))}`); }, 1e3);
+setInterval(() => { if (S?.engine) set('updated', `data ${ago(S.engine.liveAge + (Date.now() - S._recv))} old`); }, 1e3);
 </script>
 </body>
 </html>

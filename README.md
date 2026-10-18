@@ -5,7 +5,9 @@ contestant has a tradable "stock" priced in Cx Bucks. Cx Bucks are an event curr
 a hobby project to see how far a measured, rule-based bot can go on a small, thin, pump-and-dump-heavy market.
 
 The engine runs in the background (Windows scheduled task), trades on its own, protects positions you open by hand,
-and can announce its trades in the contestant's Kick chat.
+and can announce its trades in the contestant's Kick chat. A local dashboard shows it all live.
+
+![Live dashboard, portfolio section](docs/screenshots/portfolio.png)
 
 ## Contents
 
@@ -15,6 +17,7 @@ and can announce its trades in the contestant's Kick chat.
 - [Setup](#setup)
 - [Tutorial: import your cookies with EditThisCookie](#tutorial-import-your-cookies-with-editthiscookie)
 - [Running it](#running-it)
+- [Dashboard](#dashboard)
 - [Monitoring](#monitoring)
 - [Backtesting and self-check](#backtesting-and-self-check)
 - [Safety rules built in](#safety-rules-built-in)
@@ -209,16 +212,51 @@ it dies (10 s after a long run, backing off to 10 min in a crash loop). The engi
 when nothing worked for 5 minutes outside an API block, or when the session stays lost for 3 minutes (a profile
 reopened by a fresh process gets its cookie back). Stopping the task stops both.
 
+## Dashboard
+
+Open http://127.0.0.1:7788 while the engine runs (port `DASH_PORT` in `.env`). The supervisor serves it, so it stays
+up while the engine restarts and cannot stop trading if it fails. It is read-only and local (bound to 127.0.0.1),
+built from local files only, and pushes every change within 2 s (server-sent events). It works at phone width too
+([screenshot](docs/screenshots/mobile.png)).
+
+39 modules in five sections:
+
+- **Portfolio**: total value and gain since the start, cash, invested, unrealized and closed PnL, the total value
+  curve, allocation by strategy, and every position with cost, value, PnL, peak, top rank, holding time, the
+  contestant's HP and its exit condition.
+
+  ![Portfolio](docs/screenshots/portfolio.png)
+
+- **Strategies**: PnL by strategy, kill switches, market breadth against the momentum gate, the top basket ranking
+  with one-hour sparklines, the crash radar, the latest auto-tuning results, current parameters, the distribution of
+  round trips, the order log (filter: buys, sells, rejected) and the closed round trips.
+
+  ![Strategies](docs/screenshots/strategies.png)
+
+- **Market**: breadth over 24 h, trades per minute, active wallets, volume per 10 minutes, top gainers and losers,
+  the largest trades of the hour, a heat map of every live stock and the trade feed.
+
+  ![Market](docs/screenshots/market.png)
+
+- **Game**: contestants alive, deaths per hour and by cause, the latest deaths, the lowest HP, who is outside the
+  zone, and settled stocks.
+
+  ![Game](docs/screenshots/game.png)
+
+- **Engine**: health (last `/me`, last scan, session), API state, health feed, time left in the event, starts and
+  watchdog exits, Kick announcements, data file sizes and the event log (filter: orders, tuning, health).
+
+  ![Engine](docs/screenshots/engine.png)
+
+Times show in the browser's time zone. The tape arrives in 3-minute batches, so the trade feed lags by up to 3 minutes;
+prices and positions refresh every 5 seconds.
+
+`node dashboard.mjs` runs it on its own, for working on the page; edits to `dashboard.html` reload open tabs by
+themselves. `node scripts/screenshots.mjs` refreshes the screenshots above: it replaces every contestant name with
+"Player N", hides stock ids and the site host, and stops if any of them is still on the page.
+
 ## Monitoring
 
-- **Live dashboard**: open http://127.0.0.1:7788 (port `DASH_PORT` in `.env`). The supervisor serves it, so it
-  stays up while the engine restarts and cannot stop trading if it fails. It is read-only and local (bound to
-  127.0.0.1), built from local files only, and pushes every change within 2 s (server-sent events). 39 modules in
-  five sections: portfolio (total value curve, positions with cost, value, rank and HP), strategies (PnL, kill
-  switches, top basket ranking, crash radar, auto-tuning results, parameters, order log, round trips), market
-  (breadth, volume, movers, whales, heat map, trade feed), game (alive players, deaths per hour, causes, lowest HP,
-  settlements) and engine (health, API, restarts, Kick announcements, event log). `node dashboard.mjs` runs it on
-  its own, for working on the page; edits to `dashboard.html` reload open tabs by themselves.
 - `node status.mjs` prints recent deaths, market breadth, trade count, API blocks and the PnL of each strategy, from
   local files only.
 - `trades.jsonl` is the event log, one JSON object per line. Useful events:
@@ -265,7 +303,7 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 - **The engine never stores or prints credentials.** The site session lives in the browser profile. The Kick bearer
   is read from `.env`.
 - **Recorded market data stays local**: it contains other players' ids. `data/` is git-ignored except the anonymized
-  fixture.
+  fixture. The published screenshots carry no contestant name, stock id or site host.
 
 ## Files
 
@@ -280,4 +318,6 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 | `import-cookies.mjs` | EditThisCookie import |
 | `kick_say.py` | posts one chat line (Python, because Kick blocks Node's TLS fingerprint) |
 | `scripts/register-task.ps1` | Windows scheduled task |
+| `scripts/screenshots.mjs` | anonymized dashboard screenshots for this README |
+| `docs/screenshots/` | those screenshots |
 | `.env.example` | configuration template |

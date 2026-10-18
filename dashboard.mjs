@@ -39,7 +39,8 @@ function readLog() {
       // kick_say.py prints {"slug", "status", "body"}: sent = HTTP 200 from Kick; anything else carries Kick's error code
       const out = String(e.out || ''), ok = !e.err && /"status":\s*200\b/.test(out);
       ok ? kick.ok++ : kick.err++;
-      kick.last.push({ t, name: e.name, ok, why: ok ? 'envoyée' : (e.err || out.match(/[A-Z_]{6,}/)?.[0] || out.slice(0, 60)) });
+      const code = out.match(/[A-Z][A-Z_]{5,}_ERROR|[A-Z]{2,}_[A-Z_]{3,}/)?.[0], st = out.match(/"status":\s*(\d{3})/)?.[1];
+      kick.last.push({ t, name: e.name, ok, why: ok ? 'sent' : e.err ? 'script error' : `rejected${st ? ' ' + st : ''}${code ? ' ' + code : ''}` });
       if (kick.last.length > 20) kick.last.shift();
     }
     if (!QUIET.has(e.ev)) { events.push({ t, ev: e.ev, d: summarize(e) }); if (events.length > 2000) events.shift(); }
@@ -48,7 +49,7 @@ function readLog() {
 }
 function summarize(e) {
   const { t, ev, P, ...rest } = e;
-  if (ev === 'start') return `moteur démarré${e.dry ? ' (dry)' : ''}`;
+  if (ev === 'start') return `engine started${e.dry ? ' (dry)' : ''}`;
   if (/^stock-market/.test(ev)) return `${e.name} ${e.why} ${e.status}`;
   return JSON.stringify(rest).slice(0, 220);
 }
