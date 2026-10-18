@@ -24,12 +24,14 @@ VF="$VF,drawtext=$T:textfile=dash.txt:fontcolor=0xe6edf3$PAGE"
 VF="$VF,drawtext=$T:textfile=g.txt:fontcolor=0x3fb950$PAGE,drawtext=$T:textfile=r.txt:fontcolor=0xff6b6b$PAGE"
 VF="$VF,drawtext=$T:textfile=y.txt:fontcolor=0xe3b341$PAGE,drawtext=$T:textfile=c.txt:fontcolor=0x39d0ff$PAGE$DANCE"
 VF="$VF,drawtext=$T:text=CX DANCE FLOOR:fontsize=16:fontcolor=0x7d8590:x=1075:y=150"
+# the current page's ASCII art (art.txt, pushed with the page), floating slowly under the mascot
+VF="$VF,drawtext=$T:textfile=art.txt:reload=1:fontsize=17:fontcolor=0xe3b341:line_spacing=2:x=1050:y='430+5*sin(t*1.5)'"
 VF="$VF,drawbox=x=0:y=ih-48:w=iw:h=48:color=0x161b22:t=fill"
 VF="$VF,drawtext=$T:textfile=ticker.txt:reload=1:fontsize=20:fontcolor=0x3fb950:x='w-mod(t*110\,w+tw)':y=h-35"
 while :; do
   if [ -s url ] && [ -s dash.txt ]; then
     [ -s ticker.txt ] || echo "CX STOCK BOT" > ticker.txt
-    for f in g r y c; do [ -s $f.txt ] || echo " " > $f.txt; done
+    for f in g r y c art; do [ -s $f.txt ] || echo " " > $f.txt; done
     ffmpeg -nostdin -loglevel error -re -f lavfi -i color=c=0x0b0e14:s=1280x720:r=8 -f lavfi -i anullsrc=r=44100:cl=stereo \
       -vf "$VF" -c:v libx264 -preset ultrafast -tune stillimage -pix_fmt yuv420p -g 16 -b:v 600k -maxrate 600k -bufsize 1200k \
       -c:a aac -b:a 64k -f flv "$(cat url)" 2>>err.log

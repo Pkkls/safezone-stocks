@@ -79,8 +79,9 @@ after `END_AT`.
 ### Live stream (no browser)
 
 The engine pushes a text dashboard over ssh every 10 s, rotating 5 pages every 20 s, plus a ticker line. ffmpeg frames
-them with an ASCII "CX" banner, a blinking LIVE tag, a dancing ASCII mascot (`stream/dance1-4.txt`, 4 poses a second)
-and the scrolling ticker; `stream/run.sh` on a server has ffmpeg draw it
+them with an ASCII "CX" banner, a blinking LIVE tag, a dancing ASCII mascot (`stream/dance1-4.txt`, 4 poses a second),
+one floating ASCII art per page under it (`stream/art1-5.txt`: money bag, candles, bull, skull, shield) and the
+scrolling ticker; `stream/run.sh` on a server has ffmpeg draw it
 (`drawtext`), encode it and send it to the RTMP(S) ingest, restarting after any drop. Measured on a 1 GB VPS: 7% of a
 core and 94 MB at 1280x720, 5 fps.
 

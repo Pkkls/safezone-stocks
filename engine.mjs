@@ -213,13 +213,13 @@ async function guard() {
   // replaced whole), drawn and streamed by stream/run.sh
   if (me && process.env.STREAM_SSH && Date.now() - lastStream >= 10e3) {
     lastStream = Date.now();
-    const split = 'cd szdash && awk \'/^@@[a-z]+$/ { f = substr($0, 3) ".tmp"; printf "" > f; next } { print > f }\' && for f in ticker dash g r y c; do mv -f $f.tmp $f.txt; done';
+    const split = 'cd szdash && awk \'/^@@[a-z]+$/ { f = substr($0, 3) ".tmp"; printf "" > f; next } { print > f }\' && for f in ticker dash g r y c art; do mv -f $f.tmp $f.txt; done';
     const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, split], { stdio: ['pipe', 'ignore', 'ignore'] });
     c.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
     const d = { me, names, health, roster, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
       strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
-    const L = layers(pages[Math.floor(Date.now() / 20e3) % pages.length]);
-    c.stdin.end(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c }).map(([k, v]) => `@@${k}\n${v}`).join(''));
+    const i = Math.floor(Date.now() / 20e3) % pages.length, L = layers(pages[i]);
+    c.stdin.end(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c, art: ARTS[i] }).map(([k, v]) => `@@${k}\n${v}`).join(''));
   }
 }
 
@@ -227,6 +227,8 @@ async function guard() {
 // every topReb. Then (at most MAX_POS other positions): survivors 20 s after a fresh death, else the deepest crash.
 const lastScan = {};
 let lastReb = 0;
+// one ASCII art per stream page (stream/art1-5.txt), drawn under the mascot
+const ARTS = [1, 2, 3, 4, 5].map((n) => { try { return fs.readFileSync(`stream/art${n}.txt`, 'utf8'); } catch { return ' \n'; } });
 async function scan() {
   const now = Date.now(), stocks = [], spark = {};
   for (let page = 1; page <= 3; page++) {
