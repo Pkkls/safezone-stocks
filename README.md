@@ -106,7 +106,7 @@ Contestant status, decoded from the map's health frame and roster (never their p
 |---|---|
 | HP / max | hit points; max differs by contestant (90, 100, 110) |
 | sigil | the contestant's class in the game: piety, healing, protection, endurance, greed, trolling, necromancy... |
-| S shield | armor badge: kick shield (bought with Kicks) or faith shield |
+| S shield | armor badge from the game: `kick_shield` or `faith_shield` (their exact effect is not published) |
 | P poisoned | poison ticking (from a poison dart) |
 | D drone | a drone strike is incoming |
 | O outside | outside the safe zone: loses HP until back in |
