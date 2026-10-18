@@ -9,6 +9,8 @@ cookies*.json
 # runtime state and logs (contain account data)
 state.json
 state.json.tmp
+live.json
+live.json.tmp
 params.json
 trades.jsonl
 *.log

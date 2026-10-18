@@ -17,6 +17,8 @@ const LOG = 'trades.jsonl', STATE = 'state.json', PARAMS = 'params.json';
 // Supervisor: the scheduled task runs this file, which re-runs it as a child and restarts it when it dies (10 s after a
 // long run, backing off to 10 min on a crash loop). The child exits with its IPC channel, so no orphan keeps trading.
 if (!LOGIN && !process.env.SZ_CHILD) {
+  // local dashboard (dashboard.mjs, http://127.0.0.1:7788): hosted here, it outlives engine restarts and cannot stop trading
+  import('./dashboard.mjs').then((m) => m.serve()).catch((e) => fs.appendFileSync(LOG, JSON.stringify({ t: new Date().toISOString(), ev: 'dashboard_err', msg: e.message }) + '\n'));
   for (let wait = 5e3; ;) {
     const t0 = Date.now(), code = await new Promise((ok) => fork(process.argv[1], process.argv.slice(2), { env: { ...process.env, SZ_CHILD: '1' } }).on('exit', ok));
     if (code === 0 || Date.now() > END) process.exit(0);
@@ -136,6 +138,7 @@ async function trade(side, h, payload, why) {
   if (DRY) return log({ ev: 'dry', side, name: h.name, why, body });
   const r = await api(side, body), id = h.external_id;
   log({ ev: side, name: h.name, why, status: r.s, res: r.j });
+  if (r.j?.balance_after_cents != null) lastCash = r.j.balance_after_cents;
   if (r.s === 200 && r.j?.shares) { if (side.endsWith('buy')) state.shares[id] = String(BigInt(state.shares[id] || 0) + BigInt(r.j.shares)); else delete state.shares[id]; }
   if (r.s === 200 && process.env.KICK_BEARER) say(h.name, sayText(side, h.name, r.j?.cash_cents ?? 0, fs.readFileSync(LOG, 'utf8').split('\n')));
   return r;
@@ -208,6 +211,23 @@ async function guard() {
     if (why) await sellOwn(h, why);
   }
   save();
+  writeLive();
+}
+
+// Dashboard feed: what only this process knows, rewritten every guard tick (live.json, write-then-rename), plus one total
+// value point a minute (data/equity.jsonl). /me has no cash field: cash = balance after the latest order, seeded from the log.
+let lastMarket = null, lastEquity = 0;
+let lastCash = (() => { const l = fs.readFileSync(LOG, 'utf8').split('\n').findLast((x) => x.includes('"balance_after_cents"')); return l ? JSON.parse(l).res.balance_after_cents : null; })();
+function writeLive() {
+  const entry = {};
+  for (const h of me?.holdings || []) if (state.entryAt[h.external_id]) entry[h.external_id] = entryPx(h);
+  fs.writeFileSync('live.json.tmp', JSON.stringify({ t: Date.now(), pid: process.pid, startedAt: STARTED, dry: DRY, end: END, P, me, state, entry, market: lastMarket,
+    health, roster, hpFeed: Object.keys(health).length > 0, trialOff, api: { blockedUntil, backoff, lastOk, authLostAt }, lastReb, diedAt }));
+  fs.renameSync('live.json.tmp', 'live.json');
+  if (me && Date.now() - lastEquity >= 60e3) {
+    lastEquity = Date.now();
+    fs.appendFileSync('data/equity.jsonl', JSON.stringify({ t: lastEquity, value: lastCash == null ? null : lastCash + me.portfolio_value_cents, cash: lastCash, held: me.portfolio_value_cents, realized: me.realized_pnl_cents, unrealized: me.unrealized_pnl_cents, n: me.holdings.length }) + '\n');
+  }
 }
 
 // Stream, every 2 s: the ticker and the current page (a new one every 20 s) split into one text per color, each after
@@ -254,6 +274,8 @@ async function scan() {
   const active = stocks.filter((s) => s.status === 'active'), fresh = (s) => s.last_trade_at && now - Date.parse(s.last_trade_at) < 30 * 60e3;
   if (active.length) lastBreadth = breadthOf(active.filter((s) => s.last_trade_at && !s.eliminated_at).map((s) => [s.last_price_cents, priceSince(s.external_id, now - BREADTH_WINDOW) ?? s.last_price_cents]));
   log({ ev: 'scan', breadth: +lastBreadth.toFixed(2), stocks: stocks.length });
+  if (stocks.length) lastMarket = { t: now, breadth: lastBreadth, stocks: stocks.map((s) => ({ id: s.external_id, name: s.name, p: s.last_price_cents, st: s.status, el: !!s.eliminated_at,
+    lt: s.last_trade_at ? Date.parse(s.last_trade_at) : 0, prev: prev[s.external_id] ?? null, p5: priceSince(s.external_id, now - BREADTH_WINDOW) ?? null })) };
   // for the stream: 5-min moves and price ranking of the live, recently traded stocks
   const listed = active.filter((s) => !s.eliminated_at && fresh(s));
   if (listed.length) {
@@ -349,5 +371,14 @@ setInterval(() => { if (Date.now() > END) { log({ ev: 'end' }); daily().finally(
 setInterval(() => { const s = stuck(Date.now(), lastOk, blockedUntil, authLostAt); if (s.stale || s.lost) { log({ ev: 'watchdog', ...s }); process.exit(1); } }, 30e3); // the supervisor restarts us
 log({ ev: 'start', dry: DRY, P });
 await guard().catch((e) => log({ ev: 'err', fn: 'guard', msg: e.message }));
-loop(guard, 5e3); loop(scan, 15e3); loop(readMap, 3e3); loop(pushStream, 2e3); // map: the site caches it 2 s; stream: near real time loop(record, 3 * 60e3); loop(retune, 2 * 3600e3); loop(daily, 24 * 3600e3); loop(reloadParams, 30e3);
+// map: the site caches it 2 s; stream: near real time. One call per line: on 18/10 a comment in the middle of this
+// line swallowed record, retune, daily and reloadParams for 8 h (check.mjs now fails on a call hidden that way).
+loop(guard, 5e3);
+loop(scan, 15e3);
+loop(readMap, 3e3);
+loop(pushStream, 2e3);
+loop(record, 3 * 60e3);
+loop(retune, 2 * 3600e3);
+loop(daily, 24 * 3600e3);
+loop(reloadParams, 30e3);
 setTimeout(() => retune().catch((e) => log({ ev: 'err', fn: 'retune', msg: e.message })), 60e3); // after the first scans: names known

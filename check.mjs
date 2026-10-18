@@ -1,5 +1,6 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
+import fs from 'node:fs';
 import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
@@ -157,5 +158,14 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   const tr = (side, name, why, c) => JSON.stringify({ ev: `stock-market/${side}`, name, why, status: 200, res: { cash_cents: c } });
   const r = roundTrips([tr('buy', 'A', 'top #1', 1000), tr('sell', 'A', 'toprank', 1300), tr('buy', 'B', 'mom +2', 1000), tr('sell', 'B', 'x', 500), tr('buy', 'C', 'crash -30%', 1000), tr('sell', 'C', 'time', 800)], ['top', 'crash']);
   assert.deepStrictEqual(r, { top: { n: 1, win: 1, pnl: 300 }, crash: { n: 1, win: 0, pnl: -200 } });
+}
+// engine loops: every periodic job is scheduled, none hidden behind a // comment (18/10: record, retune, daily and
+// reloadParams sat after one for 8 h, the tape stopped)
+{
+  const src = fs.readFileSync('engine.mjs', 'utf8'), lines = src.split('\n');
+  const swallowed = (ls) => ls.filter((l) => /^\s*[^/\s].*\/\/.*\bloop\(/.test(l)); // code, then a comment, then a call it hides
+  assert.deepStrictEqual(swallowed(lines), [], 'a loop( after a // comment is never scheduled');
+  assert.strictEqual(swallowed(['loop(a, 1); // x loop(b, 2);']).length, 1, 'control: the 18/10 line is caught');
+  for (const fn of ['guard', 'scan', 'readMap', 'pushStream', 'record', 'retune', 'daily', 'reloadParams']) assert.ok(lines.some((l) => new RegExp(`^loop\\(${fn},`).test(l)), `${fn} is scheduled`);
 }
 console.log('check ok');

@@ -2,7 +2,9 @@
 
 An unattended trading engine for the stock market of the SafeZone fan event: a 7-day IRL battle royale where every
 contestant has a tradable stock priced in Cx Bucks, an event currency with no real-world value. It trades on its own,
-protects positions you open by hand, tunes itself, announces its trades in Kick chat and streams its state live.
+protects positions you open by hand, tunes itself, announces its trades in Kick chat, shows everything on a live local dashboard and streams its state.
+
+![Live dashboard, portfolio section](docs/screenshots/portfolio.png)
 
 ## The market (measured, not documented)
 
@@ -98,7 +100,23 @@ core and 94 MB at 1280x720, 5 fps.
 | 4 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths with what killed them |
 | 5 and on, STATUS | every alive contestant, weakest first, 34 per page (67 alive on 18/10 at 13:40 UTC: STATUS 1/2 and 2/2): HP bar, HP, sigil, and the S P D O L flags below |
 
-Pages are numbered over their current count (`6/6` with two STATUS pages).
+Pages are numbered over their current count (`6/6` with two STATUS pages). The six pages on 18/10 at 13:48 UTC:
+
+![Stream page 1, portfolio](docs/screenshots/stream-page-1.png)
+
+![Stream page 2, activity](docs/screenshots/stream-page-2.png)
+
+![Stream page 3, market](docs/screenshots/stream-page-3.png)
+
+![Stream page 4, contestants](docs/screenshots/stream-page-4.png)
+
+![Stream page 5, status 1/2](docs/screenshots/stream-page-5.png)
+
+![Stream page 6, status 2/2](docs/screenshots/stream-page-6.png)
+
+`ssh <host> sh -s < stream/snap.sh && scp '<host>:/tmp/szsnap/*.png' docs/screenshots/` retakes them: on the server,
+it waits for each page, freezes its text files and has ffmpeg draw one frame with `run.sh`'s own filters, so a
+screenshot is exactly what viewers see. The live stream is not touched. Rename `page<N>.png` to `stream-page-<N>.png`.
 
 Colors (one drawtext layer each, aligned on the same character grid): **green** gain, buy, HP over 70%, live;
 **red** loss, sell, HP under 35%, death, poison, drone, outside the zone; **yellow** HP 35 to 70%, shield; **cyan**
@@ -121,15 +139,178 @@ A frozen "data HH:MM:SS UTC" on the stream means the PC stopped pushing. `stream
 TG_CHAT>`, run every 5 min from cron on the server, sends one Telegram message when the text is over 5 min old (engine
 down, session lost or PC off) or ffmpeg is down, and one when it is back.
 
+## Dashboard
+
+Open http://127.0.0.1:7788 while the engine runs (port `DASH_PORT` in `.env`). The supervisor serves it, so it stays
+up while the engine restarts and cannot stop trading if it fails (`dashboard_err` in the log if it cannot start). It is
+read-only and local (bound to 127.0.0.1), built from local files only: `live.json`, rewritten by the engine every 5 s
+(portfolio, last scan, contestant health and roster, API state), `trades.jsonl`, the tape and `data/equity.jsonl` (one
+total value point a minute). Every change reaches open tabs within 2 s (server-sent events). It works at phone width.
+
+The screenshots below are the live dashboard on 18/10 around 14:00 UTC (16 positions, total value 1,669 Cx from 607).
+The value curve has a hole from 04:30 to 13:50 UTC: the dashboard was removed then, and no point was recorded.
+
+![Header: engine status, data age, time left in the event](docs/screenshots/header.png)
+
+40 modules in five sections.
+
+### Portfolio
+
+Total value and gain since the start, cash, invested, unrealized and closed PnL, the total value curve, allocation by
+strategy, and every position with cost, value, PnL, peak, top rank, holding time, the contestant's HP and its exit
+condition.
+
+![Portfolio](docs/screenshots/portfolio.png)
+
+*Key figures*
+
+![Key figures](docs/screenshots/kpis.png)
+
+*Total value curve, hover tooltip*
+
+![Total value curve, hover tooltip](docs/screenshots/equity-tooltip.png)
+
+*Positions*
+
+![Positions](docs/screenshots/positions.png)
+
+### Strategies
+
+PnL by strategy, kill switches, market breadth, the top basket ranking with one-hour sparklines, the crash radar, the
+latest auto-tuning results, current parameters, the distribution of round trips, the order log (filter: buys, sells,
+rejected) and the closed round trips.
+
+![Strategies](docs/screenshots/strategies.png)
+
+*PnL by strategy, kill switches, market breadth*
+
+![PnL by strategy, kill switches, market breadth](docs/screenshots/strategy-pnl.png)
+
+*Top basket ranking*
+
+![Top basket ranking](docs/screenshots/top-basket.png)
+
+*Crash radar*
+
+![Crash radar](docs/screenshots/crash-radar.png)
+
+*Auto-tuning, parameters, round trip distribution*
+
+![Auto-tuning, parameters, round trip distribution](docs/screenshots/tuning-params.png)
+
+*Order log*
+
+![Order log](docs/screenshots/orders.png)
+
+*Order log, rejected orders only*
+
+![Order log, rejected orders only](docs/screenshots/orders-rejected.png)
+
+*Round trips*
+
+![Round trips](docs/screenshots/round-trips.png)
+
+### Market
+
+Breadth over 24 h, trades per minute, active wallets, volume per 10 minutes, top gainers and losers, the largest
+trades of the hour, a heat map of every live stock and the trade feed.
+
+![Market](docs/screenshots/market.png)
+
+*Breadth over time, live activity*
+
+![Breadth over time, live activity](docs/screenshots/breadth.png)
+
+*Volume per 10 minutes, hover tooltip*
+
+![Volume per 10 minutes, hover tooltip](docs/screenshots/volume-tooltip.png)
+
+*Top gainers, top losers, whales*
+
+![Top gainers, top losers, whales](docs/screenshots/movers-whales.png)
+
+*Market heat map, hover tooltip*
+
+![Market heat map, hover tooltip](docs/screenshots/heat-map-tooltip.png)
+
+*Trade feed*
+
+![Trade feed](docs/screenshots/trade-feed.png)
+
+### Game
+
+Contestants alive, deaths per hour and by cause, every alive contestant (weakest first, with class, shield and live
+on Kick), the latest deaths, the lowest HP, who is outside the zone, and settled stocks.
+
+![Game](docs/screenshots/game.png)
+
+*Contestants, deaths per hour, causes*
+
+![Contestants, deaths per hour, causes](docs/screenshots/deaths.png)
+
+*Every alive contestant, weakest first*
+
+![Every alive contestant, weakest first](docs/screenshots/alive-contestants.png)
+
+*Latest deaths, lowest HP, outside the zone*
+
+![Latest deaths, lowest HP, outside the zone](docs/screenshots/health.png)
+
+*Settlements*
+
+![Settlements](docs/screenshots/settlements.png)
+
+### Engine
+
+Health (last `/me`, last scan, session), API state, health feed, time left in the event, starts and watchdog exits,
+Kick announcements, data file sizes and the event log (filter: orders, tuning, health).
+
+![Engine](docs/screenshots/engine.png)
+
+*Engine health, API, health feed, event end*
+
+![Engine health, API, health feed, event end](docs/screenshots/engine-health.png)
+
+*Event log, health events only*
+
+![Event log, health events only](docs/screenshots/events-health.png)
+
+### On a phone
+
+<table>
+<tr>
+<td><img src="docs/screenshots/mobile-home.png" width="190" alt="First screen"></td>
+<td><img src="docs/screenshots/mobile-positions.png" width="190" alt="Positions"></td>
+<td><img src="docs/screenshots/mobile-top-basket.png" width="190" alt="Top basket"></td>
+<td><img src="docs/screenshots/mobile-movers.png" width="190" alt="Top gainers and losers"></td>
+<td><img src="docs/screenshots/mobile-engine.png" width="190" alt="Engine health and API"></td>
+</tr>
+</table>
+
+### Whole page
+
+![The whole dashboard in one image](docs/screenshots/overview.png)
+
+### Notes
+
+Times show in the browser's time zone. The tape arrives in 3-minute batches, so the trade feed lags by up to 3 minutes;
+prices and positions refresh every 5 seconds. A gap of more than 15 minutes in the value curve is drawn as a gap.
+
+`node dashboard.mjs` runs it on its own, for working on the page; edits to `dashboard.html` reload open tabs by
+themselves. `node scripts/screenshots.mjs` retakes the 33 dashboard screenshots above from the running dashboard
+(desktop and phone, hover tooltips and filters included); `--anon` replaces every contestant name with "Player N",
+hides stock ids and the site host, and stops if any of them is still on the page.
+
 ## Monitoring
 
 `node status.mjs` prints deaths, breadth, trades and PnL per strategy from local files. `trades.jsonl` is the event
 log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick_say`, `auth_lost` (log in again),
-`blocked`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`. Telegram (optional):
+`blocked`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, chat and stream text, cookie sorter, each with a control case that must fail.
+decoder, chat and stream text (every alive contestant on a STATUS page), cookie sorter, engine loop scheduling (no
+periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules
 
@@ -141,4 +322,6 @@ decoder, chat and stream text, cookie sorter, each with a control case that must
 
 `engine.mjs` the engine and supervisor · `backtest.mjs` replays, tuning, decoders, text · `check.mjs` self-check ·
 `status.mjs` status · `import-cookies.mjs` cookie import · `kick_say.py` chat line (Python: Kick blocks Node's TLS
-fingerprint) · `stream/run.sh` stream · `stream/check.sh` stream alert · `scripts/register-task.ps1` scheduled task · `.env.example` configuration.
+fingerprint) · `stream/run.sh` stream · `stream/check.sh` stream alert · `stream/snap.sh` stream screenshots · `dashboard.mjs`
+local dashboard server · `dashboard.html` its page · `scripts/screenshots.mjs` dashboard screenshots · `docs/screenshots/`
+all the images above · `scripts/register-task.ps1` scheduled task · `.env.example` configuration.
