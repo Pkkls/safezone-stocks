@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -34,9 +34,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Params, self-tuned by retune() (params.json, hot-reloaded). size/maxImpact: share of cash / cap as share of the pool
 // reserve. Crash: drop between two scans, max rise before, hold. Run mode: start and trail. Survivors and top basket:
-// count, hold or exit rank, rebalance period, size. survTop/topN 0 = off.
+// count, hold or exit rank, rebalance period, size, calm window (entry ranks by the lowest price over it: no pump). survTop/topN 0 = off.
 const DEFAULTS = { size: 0.25, maxImpact: 0.015, dumpExit: true, crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
-  survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15 };
+  survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3 };
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
 const MIN_BUY = 1000, MAX_POS = 6, COOLDOWN = 30 * 60e3, CRASH_COOLDOWN = 5 * 60e3, TRIAL = 10, SURV_DELAY = 20e3;
 const RUN_HOLD = 120 * 60e3, MANUAL_TRAIL = 0.85, HP_MIN = 0.4, HP_EXIT = 0.25, R0 = 1e6;
@@ -271,7 +271,7 @@ const ARTS = [1, 2, 3, 4, 5].map((n) => { try { return fs.readFileSync(`stream/a
 async function scan() {
   const now = Date.now(), stocks = [], spark = {};
   for (let page = 1; page <= 3; page++) {
-    const s = await api(`stock-market/stocks?page=${page}&pageSize=100&search=`), k = await api(`stock-market/sparklines?bucket_ms=60000&since_ms=${now - BREADTH_WINDOW}&page=${page}&pageSize=100`);
+    const s = await api(`stock-market/stocks?page=${page}&pageSize=100&search=`), k = await api(`stock-market/sparklines?bucket_ms=60000&since_ms=${now - Math.max(BREADTH_WINDOW, P.topCalm || 0)}&page=${page}&pageSize=100`);
     stocks.push(...(s.j?.stocks || []));
     for (const x of k.j?.sparklines || []) spark[x.external_id] = x.points;
     if ((s.j?.stocks || []).length < 100) break;
@@ -300,7 +300,9 @@ async function scan() {
       lastReb = now;
       for (const h of me.holdings.filter((x) => state.kind[x.external_id] === 'top' && !(rank.get(x.external_id) < P.topExit))) await sellOwn(h, `toprank ${rank.get(h.external_id) ?? 'out'} ${h.last_price_cents}`);
     }
-    const mine = new Set(me.holdings.map((h) => h.external_id)), s = ranked.slice(0, P.topN).find((x) => !mine.has(x.external_id));
+    // entry by calm price (the lowest of now, topCalm/2 and topCalm ago; no sparkline point = no trade = calm): a 30 s pump never ranks
+    const calm = (x) => P.topCalm ? calmPrice(x.last_price_cents, priceSince(x.external_id, now - P.topCalm / 2) ?? x.last_price_cents, priceSince(x.external_id, now - P.topCalm) ?? x.last_price_cents) : x.last_price_cents;
+    const mine = new Set(me.holdings.map((h) => h.external_id)), s = ranked.toSorted((a, b) => calm(b) - calm(a)).slice(0, P.topN).find((x) => !mine.has(x.external_id));
     if (s && trialOn('top')) {
       const c = await cash(), amt = Math.min(Math.floor(c * P.topSize), sizeCap(s.last_price_cents));
       const t = amt >= MIN_BUY && amt <= c && await buy(s, amt, `top #${rank.get(s.external_id) + 1} @${s.last_price_cents}`, 'top');

@@ -23,7 +23,7 @@ Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one orde
 
 | Strategy | Buys | Sells |
 |---|---|---|
-| `top` | the 10 highest-priced live contestants (traded in the last 30 min), 15% of cash each | rank 20 or worse at the hourly check |
+| `top` | the 10 highest-priced live contestants (traded in the last 30 min), ranked on their lowest price of now, 2.5 and 5 min ago (`topCalm`: a pump never ranks), 15% of cash each, one buy per scan | rank 20 or worse at the hourly check |
 | `surv` | 20 s after a new death, the 2 highest-priced live contestants (at most 2 open) | after 30 min |
 | `crash` | a drop of 25%+ between two scans with no pump in the 3 min before (logged as kind `dip`) | after 10 min |
 
@@ -49,6 +49,12 @@ Momentum paid only in the opening rush and lost afterwards; chasing a pump loses
 copying the best wallets lost 10% (they are the pumpers); the whole market drifts down (-1.4% to -5% per 30 min held);
 scanning every 5 s instead of 15 s earned less (it buys mid-fall); adding to winners lost. What paid: the top basket
 (+404 Cx from 866 on one evening, both halves positive) and crash rebounds with run mode. Small samples: hints, not laws.
+
+18/10 21:00 UTC: the basket lost 130 Cx on two pumps (a stock pushed from 22 to 227 Cx by dozens of wallets in a few
+seconds, bought at 227, back at 22 thirty seconds later). The replay now buys on any scan, as the engine does (it
+used to buy only at the hourly check, so it never saw a pump). On the last 24 h of tape, ranking entries by the
+lowest price over 5 min: +1,588 Cx instead of +1,355, worst trade -43 instead of -64, both halves better. On the last
+12 h alone the basket loses either way (-57 with the filter, -74 without): the gains come from the evening rushes.
 
 ## Setup
 
@@ -316,7 +322,7 @@ log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), chat and stream text (every alive contestant on a STATUS page), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, chat and stream text (every alive contestant on a STATUS page), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules

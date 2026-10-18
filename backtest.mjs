@@ -167,6 +167,11 @@ function priceAt(p, t) {
   while (lo <= hi) { const m = (lo + hi) >> 1; if (p.ts[m] <= t) { k = m; lo = m + 1; } else hi = m - 1; }
   return k < 0 ? null : p.pa[k];
 }
+function lastAt(p, t) { // time of the last trade at or before t (0: none)
+  let lo = 0, hi = p.ts.length - 1, k = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (p.ts[m] <= t) { k = m; lo = m + 1; } else hi = m - 1; }
+  return k < 0 ? 0 : p.ts[k];
+}
 // net return of a round trip of 100 Cx: fees both sides plus own price impact both sides
 const net = (pe, px) => px / pe * (1 - FEE) ** 2 * (1 - 1e4 / (R0 * Math.sqrt(pe / 1000))) * (1 - 1e4 / (R0 * Math.sqrt(px / 1000))) - 1;
 // hold from u0 (age counted from t): sold after `hold`, unless the peak reaches runStart x entry (run mode): then a
@@ -211,26 +216,26 @@ export function simulateSurv({ paths, t0, t1 }, Q, deaths, names = {}) {
   }
   return H.get();
 }
-// Top basket as traded: every topReb hold the topN highest-priced live stocks (min(topSize x cash, 1.5% of the
-// reserve) each), sell at rank topExit or at the death knock. From 866 Cx; Cx PnL of the window and of each half.
-export function simulateTop({ paths, t0, t1 }, Q) {
-  const { topN, topExit, topReb, topSize = 0.15 } = Q, imp = (p, c) => c / (R0 * Math.sqrt(p / 1000));
+// Top basket as traded: one buy per scan (every `step`) of the first not-held stock of the topN by calm price, sold at
+// rank topExit every topReb or at the death knock; min(topSize x cash, 1.5% of the reserve) each. Calm price =
+// min(now, topCalm/2 ago, topCalm ago): 18/10 a pump took a 22 Cx stock to 227 for 30 s, the basket bought it at the
+// top and it was back at 22 (-84 Cx). From 866 Cx; Cx PnL of the window and of each half.
+export const calmPrice = (now, half, full) => Math.min(now, half ?? 0, full ?? 0);
+export function simulateTop({ paths, t0, t1 }, Q, step = 60e3) {
+  const { topN, topExit, topReb, topSize = 0.15, topCalm = 0 } = Q, imp = (p, c) => c / (R0 * Math.sqrt(p / 1000));
   const run = (from, to) => {
-    let cash = 86580, n = 0; const pos = {};
+    let cash = 86580, n = 0, reb = -Infinity; const pos = {};
     const sell = (id, px) => { const v = pos[id] * px; cash += v * (1 - FEE) * (1 - imp(px, v)); delete pos[id]; };
-    for (let t = from; t <= to && topN > 0; t += 60e3) {
+    for (let t = from; t <= to && topN > 0; t += step) {
       for (const id of Object.keys(pos)) if (paths[id].deathAt <= t) sell(id, priceAt(paths[id], t));
-      if ((t - from) % topReb) continue;
-      const ranked = Object.entries(paths).filter(([, p]) => !(p.deathAt <= t) && (p.ts.findLast((x) => x <= t) ?? 0) > t - 30 * 60e3)
-        .map(([id, p]) => ({ id, now: priceAt(p, t) })).sort((a, b) => b.now - a.now);
+      const ranked = Object.entries(paths).filter(([, p]) => !(p.deathAt <= t) && lastAt(p, t) > t - 30 * 60e3)
+        .map(([id, p]) => { const now = priceAt(p, t); return { id, now, calm: topCalm ? calmPrice(now, priceAt(p, t - topCalm / 2), priceAt(p, t - topCalm)) : now }; }).sort((a, b) => b.now - a.now);
       const rank = new Map(ranked.map((x, i) => [x.id, i]));
-      for (const id of Object.keys(pos)) if (!(rank.get(id) < topExit)) sell(id, priceAt(paths[id], t));
-      for (const x of ranked.slice(0, topN)) {
-        if (pos[x.id]) continue;
-        const c = Math.min(cash * topSize, R0 * Math.sqrt(x.now / 1000) * 0.015);
-        if (c < 1000) break;
-        cash -= c; n++; pos[x.id] = c * (1 - FEE) * (1 - imp(x.now, c)) / x.now;
-      }
+      if (t - reb >= topReb) { reb = t; for (const id of Object.keys(pos)) if (!(rank.get(id) < topExit)) sell(id, priceAt(paths[id], t)); }
+      const x = ranked.toSorted((a, b) => b.calm - a.calm).slice(0, topN).find((y) => !pos[y.id]);
+      if (!x) continue;
+      const c = Math.min(cash * topSize, R0 * Math.sqrt(x.now / 1000) * 0.015);
+      if (c >= 1000) { cash -= c; n++; pos[x.id] = c * (1 - FEE) * (1 - imp(x.now, c)) / x.now; }
     }
     for (const [id, sh] of Object.entries(pos)) { const px = priceAt(paths[id], to); cash += sh * px * (1 - FEE) * (1 - imp(px, sh * px)); }
     return { pnl: (cash - 86580) / 100, n };

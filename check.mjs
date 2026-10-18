@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, deadAfter, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -99,6 +99,12 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.strictEqual(r.n, 2, 'after the death knock: sold a, bought b, a never again');
   assert.ok(r.total < 0, 'the death knock costs about 20% of the position');
   assert.deepStrictEqual(tuneTop(mk((k) => 2000 + k * 5), Q).adopt, null, 'one buy must never be enough to adopt');
+  // 30 s pump (18/10: 22 -> 227 -> 22 Cx): with topCalm the pumped stock never ranks; control: without it, bought at the top, a loss
+  const pump = []; for (let k = 0; k <= 400; k++) pump.push(row('a', k * 30e3, 2000, 2000), row('p', k * 30e3 + 1, k === 200 || k === 201 ? 20000 : 500, k === 200 || k === 201 ? 20000 : 500));
+  const calm = simulateTop(prepare(pump), { ...Q, topCalm: 5 * 60e3 }), raw = simulateTop(prepare(pump), Q);
+  assert.strictEqual(calm.n, 1, 'calm: only the steady leader is bought');
+  assert.ok(raw.n === 2 && raw.total < calm.total - 10, 'control: without topCalm the pump is bought and loses');
+  assert.strictEqual(calmPrice(22700, 2200, 2200), 2200, 'calm price = the lowest of the three');
 }
 // watchdog: stale after 5 min without success, never during an API block; lost after 3 min of 401
 {
