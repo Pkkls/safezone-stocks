@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamText } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamPages, roundTrips } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -167,7 +167,7 @@ function trialOn(prefix) {
 // Exits, every 5 s. Manual positions: trail, death, hp, elimination, dump; never on time. Engine positions: crash ('dip')
 // and survivor buys sell on time unless in run mode (peak >= runStart x entry: runTrail trail, RUN_HOLD cap); the top
 // basket sells on rank (scan). All: status, death, hp, elimination. /me 500s: last holdings, repriced one by one.
-let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastStream = 0, lastBreadth = 0, names = {};
+let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastStream = 0, lastBreadth = 0, names = {}, movers = [], ranking = [];
 const lastPrice = {}, status = {}, eliminated = {}, lastTradeAt = {}, STARTED = Date.now();
 async function guard() {
   const r = await api('stock-market/me');
@@ -209,7 +209,9 @@ async function guard() {
     lastStream = Date.now();
     const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, 'cat > szdash/dash.tmp && mv szdash/dash.tmp szdash/dash.txt'], { stdio: ['pipe', 'ignore', 'ignore'] });
     c.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
-    c.stdin.end(streamText(me, names, health, lastBreadth, STARTED, (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), Date.now(), recentDeaths));
+    const pages = streamPages({ me, names, health, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
+      strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) });
+    c.stdin.end(pages[Math.floor(Date.now() / 20e3) % pages.length]); // a new page every 20 s
   }
 }
 
@@ -233,6 +235,12 @@ async function scan() {
   const active = stocks.filter((s) => s.status === 'active'), fresh = (s) => s.last_trade_at && now - Date.parse(s.last_trade_at) < 30 * 60e3;
   if (active.length) lastBreadth = breadthOf(active.filter((s) => s.last_trade_at && !s.eliminated_at).map((s) => [s.last_price_cents, priceSince(s.external_id, now - BREADTH_WINDOW) ?? s.last_price_cents]));
   log({ ev: 'scan', breadth: +lastBreadth.toFixed(2), stocks: stocks.length });
+  // for the stream: 5-min moves and price ranking of the live, recently traded stocks
+  const listed = active.filter((s) => !s.eliminated_at && fresh(s));
+  if (listed.length) {
+    movers = listed.map((s) => { const p5 = priceSince(s.external_id, now - BREADTH_WINDOW); return { name: s.name, ret: p5 ? s.last_price_cents / p5 - 1 : 0 }; }).filter((m) => m.ret);
+    ranking = listed.map((s) => ({ name: s.name, price: s.last_price_cents })).sort((a, b) => b.price - a.price);
+  }
   if (!me || !me.trading_enabled) return;
   const live = active.filter((s) => !s.eliminated_at && !dead(s.name) && !risky(s.name));
   if (P.topN > 0) {

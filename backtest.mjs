@@ -48,24 +48,51 @@ export function decodeHealth(frames) {
   return out;
 }
 
-// Stream text, 96 columns (1280 px at 20 px DejaVu Mono), drawn by ffmpeg on the streaming box: a header, then
-// positions on the left and the last orders and deaths on the right. kindOf(id) -> strategy, '' = opened by hand;
-// deaths = [{ u, t, cause, source }], newest last (source = zone, knife, drone...; cause is mostly "damage").
-export function streamText(me, names, health, breadth, startedAt, kindOf = () => '', now = Date.now(), deaths = []) {
+// Stream pages: the engine pushes one every 10 s and moves to the next every PAGE_MS (all 96 columns x 22 lines, 1280x720
+// at 20 px DejaVu Mono, drawn by ffmpeg on the streaming box). d = { me, names, health, breadth, startedAt, now,
+// kindOf(id) -> strategy ('' = opened by hand), deaths [{ u, t, source }] newest last, movers [{ name, ret }],
+// ranking [{ name, price }] highest first, strategies { prefix: { n, win, pnl } } }.
+export function streamPages(d) {
+  const { me, names = {}, health = {}, breadth = 0, startedAt = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {} } = d;
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
-  const up = Math.floor((now - startedAt) / 60e3), hm = (t) => new Date(t).toISOString().slice(11, 16);
-  const left = ['POSITION        TYPE      VALUE      P/L'];
-  for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 16))
-    left.push(`${pad(h.name, 15)} ${pad(kindOf(h.external_id) || 'manual', 6)} ${c(h.current_value_cents).padStart(8)} ${s(h.current_value_cents - h.cost_basis_cents).padStart(8)}`);
-  const right = ['LAST ORDERS (UTC)'];
-  for (const t of (me.trades || []).slice(0, 8)) right.push(`${hm(t.occurred_at)}  ${pad(t.side, 4)} ${pad(names[t.external_id] || '?', 15)} ${c(t.cash_cents).padStart(7)}`);
-  right.push('', 'LAST DEATHS (UTC)');
-  for (const d of deaths.slice(-6).reverse()) right.push(`${hm(d.t)}  ${pad(d.u, 18)} ${pad(d.source || d.cause || '', 13)}`);
-  const L = [`SAFEZONE STOCK BOT   play money, automated trading                    data ${new Date(now).toISOString().slice(11, 19)} UTC`,
-    `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}   Market rising ${Math.round(breadth * 100)} pct`,
-    `Contestants alive ${Object.values(health).filter((h) => h.alive).length}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`, ''];
-  for (let i = 0; i < Math.max(left.length, right.length); i++) L.push(((left[i] || '').padEnd(52) + (right[i] || '')).trimEnd());
-  return L.join('\n') + '\n';
+  const hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
+  const up = Math.floor((now - startedAt) / 60e3), alive = Object.values(health).filter((h) => h.alive).length;
+  const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => ((a[i] || '').padEnd(50) + (b[i] || '')).trimEnd());
+  const page = (i, title, body) => [`SAFEZONE STOCK BOT   play money, automated trading   ${i}/4 ${title}`.padEnd(75) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
+    `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}   Alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
+    '', ...body.slice(0, 19)].join('\n') + '\n';
+
+  const pos = ['POSITION          TYPE       COST     VALUE       P/L      %'];
+  for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 18)) {
+    const pl = h.current_value_cents - h.cost_basis_cents;
+    pos.push(`${pad(h.name, 17)} ${pad(kindOf(h.external_id) || 'yours', 6)} ${c(h.cost_basis_cents).padStart(9)} ${c(h.current_value_cents).padStart(9)} ${s(pl).padStart(9)} ${pct(h.cost_basis_cents ? pl / h.cost_basis_cents : 0).padStart(7)}`);
+  }
+  const orders = ['LAST ORDERS (UTC)'];
+  for (const t of (me.trades || []).slice(0, 14)) orders.push(`${hm(t.occurred_at)}  ${pad(t.side, 4)}  ${pad(names[t.external_id] || '?', 16)} ${c(t.cash_cents).padStart(8)} Cx`);
+  const strat = ['STRATEGY   TRIPS   WON        PNL'];
+  for (const [k, r] of Object.entries(strategies)) strat.push(`${pad(k, 10)} ${String(r.n).padStart(5)} ${String(r.win).padStart(5)} ${s(r.pnl).padStart(10)}`);
+  const mv = [...movers].sort((a, b) => b.ret - a.ret), rows = (v) => v.map((m) => `${pad(m.name, 20)} ${pct(m.ret).padStart(8)}`);
+  const market = [`RISING 5 MIN (${Math.round(breadth * 100)} pct of the market)`, ...rows(mv.filter((m) => m.ret > 0).slice(0, 8)), '', 'FALLING 5 MIN', ...rows([...mv].reverse().filter((m) => m.ret < 0).slice(0, 8))];
+  const rank = ['MOST EXPENSIVE        PRICE', ...ranking.slice(0, 18).map((r, i) => `${String(i + 1).padStart(2)}. ${pad(r.name, 17)} ${c(r.price).padStart(7)}`)];
+  const danger = ['IN DANGER (hp < 35% or out)      HP'];
+  for (const [u, h] of Object.entries(health).filter(([, h]) => h.alive && (h.out || h.hp < h.max * 0.35)).sort((a, b) => a[1].hp / a[1].max - b[1].hp / b[1].max).slice(0, 18))
+    danger.push(`${pad(u, 26)} ${`${h.hp}/${h.max}`.padStart(7)}${h.out ? '  out' : ''}`);
+  if (danger.length === 1) danger.push('nobody');
+  const dead = ['LAST DEATHS (UTC)'];
+  for (const x of deaths.slice(-18).reverse()) dead.push(`${hm(x.t)}  ${pad(x.u, 22)} ${pad(x.source || x.cause || '', 14)}`);
+  return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead))];
+}
+
+// Round trips per strategy (buy reason prefix) over trades.jsonl lines: matched buy -> next sell of the same name.
+export function roundTrips(lines, prefixes) {
+  const open = {}, out = Object.fromEntries(prefixes.map((p) => [p, { n: 0, win: 0, pnl: 0 }]));
+  for (const l of lines) {
+    if (!l.includes('"status":200') || !/"ev":"stock-market\/(buy|sell)"/.test(l)) continue;
+    const e = JSON.parse(l), k = String(e.why).split(' ')[0];
+    if (e.ev.endsWith('buy')) { if (out[k]) open[e.name] = { k, c: e.res.cash_cents }; else delete open[e.name]; }
+    else if (open[e.name]) { const o = open[e.name], r = out[o.k]; r.n++; r.pnl += e.res.cash_cents - o.c; if (e.res.cash_cents > o.c) r.win++; delete open[e.name]; }
+  }
+  return out;
 }
 
 // share of traded stocks up > 2% over BREADTH_WINDOW; pairs = [now, then]
