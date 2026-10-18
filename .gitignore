@@ -9,12 +9,9 @@ cookies*.json
 # runtime state and logs (contain account data)
 state.json
 state.json.tmp
-live.json
-live.json.tmp
 params.json
 trades.jsonl
 *.log
 *.err
 # market data recorded live (other players' ids); only the anonymized test fixture is tracked
 data/*
-!data/opening-17-10.jsonl

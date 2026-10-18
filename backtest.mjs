@@ -1,31 +1,23 @@
-// Replay public trades (data/tape.json) through the engine's entry/exit rules.
-// CLI: node backtest.mjs [hours]  -> grid over the last N hours (default: all tape)
-// Engine: import { tune } for the periodic walk-forward retune.
+// Pure helpers for engine.mjs (tape, replays and self-tuning, health decoder, chat and stream text). Tested by check.mjs.
 import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
 
-const FEE = 0.015, R0 = 1e6; // pool cash reserve at start (cents), measured from trade slippage
-const STEP = 30e3;           // engine scan cadence
+const FEE = 0.015, R0 = 1e6; // fee per side; pool cash reserve at 10.00 (cents): reserve R = R0 * sqrt(price / 1000)
+export const BREADTH_WINDOW = 5 * 60e3, DUMP_DROP = 0.05;
 
-// constant-product impact: price ~ R^2, buying c at price P (reserve R = R0*sqrt(P/1000)) fills near P*(1+c/R)
-const fill = (P, c, side) => { const R = R0 * Math.sqrt(P / 1000); return side === 'buy' ? P * (1 + c / R) : P * (1 - c / R); };
-
-// Tape rows are compact: { e: external_id, t: ms, pb/pa: price before/after (cents), u: user_id, s: 'b'|'s', c: cash cents },
-// one JSON per line, one file per UTC day in data/. u/s/c identify pump & dump wallets. compact() converts an API trade.
+// Tape: one compact JSON row per public trade { e: stock, t, pb/pa: price before/after, u: user, s: b|s, c: cash },
+// one file per UTC day in data/.
 export const compact = (x) => ({ e: x.external_id, t: Date.parse(x.occurred_at), pb: x.price_before_cents, pa: x.price_after_cents, u: x.user_id, s: x.side === 'buy' ? 'b' : 's', c: x.cash_cents });
-export function loadTape(sinceMs = 0) {
-  if (!fs.existsSync('data')) return [];
+export function loadTape(since = 0) {
   const rows = [];
-  for (const f of fs.readdirSync('data').filter((f) => /^tape-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort()) {
-    if (Date.parse(f.slice(5, 15)) + 86400e3 < sinceMs) continue;
-    for (const l of fs.readFileSync('data/' + f, 'utf8').split('\n')) if (l) { const r = JSON.parse(l); if (r.t >= sinceMs) rows.push(r); }
+  for (const f of fs.existsSync('data') ? fs.readdirSync('data').filter((f) => /^tape-\d{4}-\d\d-\d\d\.jsonl$/.test(f)).sort() : []) {
+    if (Date.parse(f.slice(5, 15)) + 86400e3 < since) continue;
+    for (const l of fs.readFileSync('data/' + f, 'utf8').split('\n')) if (l) { const r = JSON.parse(l); if (r.t >= since) rows.push(r); }
   }
   return rows.sort((a, b) => a.t - b.t);
 }
 
-// Kick chat line for a live trade. lines = trades.jsonl lines. API cash_cents: buy = total debited,
-// sell = net credited (both checked against balance_after_cents, 18/10), so net pnl = sell - last buy.
-// Kick rejects lines with too many symbols (MAX_SPECIAL_CHARS_ERROR on 18/10 for "₡..., net +₡... (+x%)"): plain words only.
+// Kick chat line. API cash_cents: buy = total debited, sell = net credited, so net = sell - last buy. Kick rejects
+// lines with many symbols (MAX_SPECIAL_CHARS_ERROR): plain words only.
 export function sayText(side, name, cash, lines) {
   const c = (x) => `${(x / 100).toFixed(2)} Cx`;
   if (side.endsWith('buy')) return `SafeZone stocks bought ${name} for ${c(cash)}`;
@@ -36,40 +28,33 @@ export function sayText(side, name, cash, lines) {
   return `SafeZone stocks sold ${name} for ${c(cash)} net ${pnl >= 0 ? 'profit' : 'loss'} ${c(Math.abs(pnl))} ${(Math.abs(pnl) / cost * 100).toFixed(1)}%`;
 }
 
-// Map snapshot health. Binary frames are the site's compact wire format, read the way its own client does (cx-client
-// bundle, 18/10). Only kind 2 (health) is read: kind 1 carries positions and is deliberately skipped.
-// Kind 2 after the 36-byte header (n = record count, u16 at byte 32): u32 def seq, f64 time base, then columns
-// slot u16[n], status u8[n], badges u8[n], flags u16[n] (1 alive, 8 outside), hp u8[n], max_hp u8[n].
-// Slots map to usernames through the 'contestants' text frame. The first kind-2 frame is full, later ones are updates,
-// so applying them in order leaves the latest value. Returns { lowercased username: { hp, max, alive, out } }.
-const HP_STATUS = ['disabled', 'paused', 'inside', 'outside', 'unavailable', 'eliminated'];
+// Map health, read as the site's own client does. Only binary kind 2: after the 36-byte header (record count n = u16
+// at 32), u32 + f64, then columns slot u16[n], status u8[n], badges u8[n], flags u16[n] (1 alive, 8 outside), hp u8[n],
+// max u8[n]. Kind 1 (live positions) is never read. Later kind-2 frames are updates, applied in order.
 export function decodeHealth(frames) {
   const out = {};
   let slots = null;
-  for (const f of frames) if (f.text && f.text.includes('"contestants"')) slots = new Map(JSON.parse(f.text).data.slots.slots.map((s) => [s.slot, s.username.toLowerCase()]));
+  for (const f of frames) if (f.text?.includes('"contestants"')) slots = new Map(JSON.parse(f.text).data.slots.slots.map((s) => [s.slot, s.username.toLowerCase()]));
   if (!slots) return out;
   for (const f of frames) {
     if (!f.binary) continue;
-    const b = Buffer.from(f.binary, 'base64'), v = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    if (b.length < 48 || v.getUint8(0) !== 2) continue;
-    const n = v.getUint16(32, true), w = 48;
-    if (b.length < w + n * 8) continue;
+    const b = Buffer.from(f.binary, 'base64'), v = new DataView(b.buffer, b.byteOffset, b.byteLength), n = b.length >= 48 ? v.getUint16(32, true) : 0;
+    if (b[0] !== 2 || b.length < 48 + n * 8) continue;
     for (let i = 0; i < n; i++) {
-      const u = slots.get(v.getUint16(w + i * 2, true)), fl = v.getUint16(w + n * 4 + i * 2, true);
-      if (u) out[u] = { hp: v.getUint8(w + n * 6 + i), max: v.getUint8(w + n * 7 + i), alive: (fl & 1) !== 0, out: (fl & 8) !== 0 || HP_STATUS[v.getUint8(w + n * 2 + i)] === 'outside' };
+      const u = slots.get(v.getUint16(48 + i * 2, true)), fl = v.getUint16(48 + n * 4 + i * 2, true);
+      if (u) out[u] = { hp: b[48 + n * 6 + i], max: b[48 + n * 7 + i], alive: (fl & 1) !== 0, out: (fl & 8) !== 0 || b[48 + n * 2 + i] === 3 };
     }
   }
   return out;
 }
 
-// Text dashboard for the stream (engine pushStream, drawn by ffmpeg drawtext on the streaming box; 90 columns,
-// monospace). kindOf(external_id) -> strategy tag, '' for positions the operator opened by hand.
+// Stream text (90 columns, drawn by ffmpeg on the streaming box). kindOf(id) -> strategy, '' = opened by hand.
 export function streamText(me, names, health, breadth, startedAt, kindOf = () => '', now = Date.now()) {
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
-  const alive = Object.values(health).filter((h) => h.alive).length, up = Math.floor((now - startedAt) / 60e3);
+  const up = Math.floor((now - startedAt) / 60e3);
   const L = [`SAFEZONE STOCK BOT   play money, automated trading   data ${new Date(now).toISOString().slice(11, 19)} UTC`,
     `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}`,
-    `Market rising ${Math.round(breadth * 100)} pct   Contestants alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
+    `Market rising ${Math.round(breadth * 100)} pct   Contestants alive ${Object.values(health).filter((h) => h.alive).length}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
     '', 'POSITION         TYPE         COST    VALUE   P/L'];
   for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 10))
     L.push(`${pad(h.name, 16)} ${pad(kindOf(h.external_id) || 'manual', 8)} ${c(h.cost_basis_cents).padStart(8)} ${c(h.current_value_cents).padStart(8)}   ${s(h.current_value_cents - h.cost_basis_cents)}`);
@@ -78,169 +63,74 @@ export function streamText(me, names, health, breadth, startedAt, kindOf = () =>
   return L.join('\n') + '\n';
 }
 
+// share of traded stocks up > 2% over BREADTH_WINDOW; pairs = [now, then]
+export const breadthOf = (pairs) => { const v = pairs.filter(([a, b]) => a && b); return v.length ? v.filter(([a, b]) => a > b * 1.02).length / v.length : 0; };
+
+// Price paths per stock. deathAt: the server's -15..-25% knock between two trades, over 20 s apart (a death).
 export function prepare(tape) {
   const paths = {};
   for (const r of tape) {
-    const p = (paths[r.e] ||= { ts: [], pa: [], pb0: r.pb, dumps: [] });
-    // death: the server's -20% knock between two trades (no trade of its own), 30 s to 2 min after the grave
-    const gap = p.pa.length ? r.pb / p.pa.at(-1) - 1 : 0;
+    const p = (paths[r.e] ||= { ts: [], pa: [] }), gap = p.pa.length ? r.pb / p.pa.at(-1) - 1 : 0;
     if (gap < -0.15 && gap > -0.25 && r.t - p.ts.at(-1) > 20e3) p.deathAt ??= r.t;
     p.ts.push(r.t); p.pa.push(r.pa);
-    if (r.s === 's' && (r.pb - r.pa) / r.pb >= DUMP_DROP) p.dumps.push(r.t);
   }
   return { paths, t0: tape[0].t, t1: tape.at(-1).t };
 }
-
-// last known price at time t (binary search)
 function priceAt(p, t) {
   let lo = 0, hi = p.ts.length - 1, k = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (p.ts[m] <= t) { k = m; lo = m + 1; } else hi = m - 1; }
   return k < 0 ? null : p.pa[k];
 }
-
-// Market breadth: share of stocks up > 2% over 5 min. Momentum paid only in the market-wide opening rush
-// (17/10 tape: +21% mean 3 min after a signal in the first 15 min, +2% after, under the 3% round-trip fee).
-// After the rush the same rules lose at minBreadth 0/0.4/0.5 and stand aside at 0.6.
-export const BREADTH_WINDOW = 5 * 60e3;
-export const DUMP_DROP = 0.05; // one sell knocking the price down >= 5% (see engine.mjs dumped())
-// pairs = [price now, price 5 min ago] for stocks traded at least once by now; a stock first traded inside the
-// window uses its pre-trade price as "then". Never-traded stocks are left out: counting them as flat kept
-// breadth under 40% even during the profitable opening.
-export const breadthOf = (pairs) => { const v = pairs.filter(([now, then]) => now && then); return v.length ? v.filter(([now, then]) => now > then * 1.02).length / v.length : 0; };
-
-export function simulate({ paths, t0, t1 }, P) {
-  const { lookback, entryMin, entryMax, trail, maxHold, size, minBreadth = 0, dumpExit = false, dumpBreadth = minBreadth } = P;
-  let cash = 50000; const pos = {}, exited = {}; let n = 0, wins = 0;
-  const ids = Object.keys(paths);
-  const breadthAt = (t) => breadthOf(ids.map((id) => [priceAt(paths[id], t), priceAt(paths[id], t - BREADTH_WINDOW) ?? (paths[id].ts[0] <= t ? paths[id].pb0 : null)]));
-  for (let t = t0 + lookback; t <= t1; t += STEP) {
-    const br = minBreadth || dumpExit ? breadthAt(t) : 1;
-    for (const id of Object.keys(pos)) {
-      const h = pos[id], p = priceAt(paths[id], t); h.peak = Math.max(h.peak, p);
-      const dump = dumpExit && br < dumpBreadth && paths[id].dumps.some((d) => d > Math.max(h.t, t - STEP) && d <= t);
-      if (!(p < h.peak * trail || (maxHold && t - h.t > maxHold) || dump)) continue;
-      const out = h.sh * fill(p, h.sh * p, 'sell') * (1 - FEE);
-      cash += out; n++; if (out > h.cost) wins++; delete pos[id]; exited[id] = t;
-    }
-    if (Object.keys(pos).length >= 6) continue;
-    if (br < minBreadth) continue;
-    let best = null;
-    for (const id of ids) {
-      if (pos[id] || t - (exited[id] || -Infinity) < 30 * 60e3) continue;
-      const now = priceAt(paths[id], t), then = priceAt(paths[id], t - lookback);
-      if (!now || !then) continue;
-      const ret = now / then - 1;
-      if (ret >= entryMin && ret <= entryMax && (!best || ret > best.ret)) best = { id, ret, now };
-    }
-    const amt = Math.floor(cash * size);
-    if (best && amt >= 1000) {
-      pos[best.id] = { sh: amt * (1 - FEE) / fill(best.now, amt, 'buy'), peak: best.now, cost: amt, t };
-      cash -= amt;
-    }
+// net return of a round trip of 100 Cx: fees both sides plus own price impact both sides
+const net = (pe, px) => px / pe * (1 - FEE) ** 2 * (1 - 1e4 / (R0 * Math.sqrt(pe / 1000))) * (1 - 1e4 / (R0 * Math.sqrt(px / 1000))) - 1;
+// hold from u0 (age counted from t): sold after `hold`, unless the peak reaches runStart x entry (run mode): then a
+// runTrail trail from the peak, 2 h cap. null = still open at the end of the tape.
+function ride(p, pe, u0, t, t1, hold, { runStart, runTrail }) {
+  let pk = pe, run = false;
+  for (let u = u0; u <= t1; u += 5e3) {
+    const x = priceAt(p, u); pk = Math.max(pk, x);
+    if (pk >= pe * runStart) run = true;
+    if ((!run && u - t >= hold) || (run && (x < pk * runTrail || u - t >= 2 * 3600e3))) return { px: x, u };
   }
-  let value = cash;
-  for (const id of Object.keys(pos)) value += pos[id].sh * priceAt(paths[id], t1) * (1 - FEE);
-  return { pnl: Math.round(value - 50000), n, wins };
+  return null;
 }
+const halves = (t0, t1) => { const h = [[], []], tm = (t0 + t1) / 2; return { add: (t, r) => h[t < tm ? 0 : 1].push(r), get: () => { const s = (v) => v.reduce((a, b) => a + b, 0); return { n: h[0].length + h[1].length, h1: s(h[0]), h2: s(h[1]), total: s(h[0]) + s(h[1]) }; } }; };
 
-// Crash rebound + run mode, as the engine trades it: a drop >= crashDrop between two 15 s scans with less than
-// crashFlat of rise over the 3 min before, bought 3 s later; sold after dipHold, unless the peak reaches runStart x
-// entry, then a runTrail trailing stop from the peak, capped at 2 h. Returns per-trade net returns (fees + own impact)
-// split into the two halves of the window, so tuning can demand a result that holds in both.
+// Crash rebound as traded: a drop >= crashDrop between two 15 s scans with < crashFlat rise over the 3 min before,
+// bought 3 s later, sold by ride(dipHold); 5 min cooldown. Returns summed per-trade returns per half of the window.
 export function simulateCrash({ paths, t0, t1 }, Q) {
-  const { crashDrop, crashFlat, dipHold, runStart, runTrail } = Q;
-  const net = (pe, px) => px / pe * (1 - FEE) ** 2 * (1 - 1e4 / (R0 * Math.sqrt(pe / 1000))) * (1 - 1e4 / (R0 * Math.sqrt(px / 1000))) - 1;
-  const tm = (t0 + t1) / 2, halves = [[], []];
+  const H = halves(t0, t1);
   for (const p of Object.values(paths)) {
-    let free = -Infinity;
-    for (let t = t0 + 180e3; t <= t1; t += STEP / 2) {
+    for (let t = t0 + 180e3, free = -Infinity; t <= t1; t += 15e3) {
       if (t < free) continue;
       const now = priceAt(p, t), prev = priceAt(p, t - 15e3), p3 = priceAt(p, t - 180e3);
-      if (!now || !prev || !p3 || now / prev - 1 > -crashDrop || prev / p3 - 1 >= crashFlat) continue;
-      const pe = priceAt(p, t + 3e3);
-      let pk = pe, run = false, px = null, u;
-      for (u = t + 3e3; u <= t1; u += 5e3) {
-        const x = priceAt(p, u); pk = Math.max(pk, x);
-        if (pk >= pe * runStart) run = true;
-        if ((!run && u - t >= dipHold) || (run && (x < pk * runTrail || u - t >= 2 * 3600e3))) { px = x; break; }
-      }
-      if (px === null) break; // still open at the end of the tape: not counted
-      halves[t < tm ? 0 : 1].push(net(pe, px));
-      free = u + 5 * 60e3; // crash cooldown
+      if (!now || !prev || !p3 || now / prev - 1 > -Q.crashDrop || prev / p3 - 1 >= Q.crashFlat) continue;
+      const pe = priceAt(p, t + 3e3), x = ride(p, pe, t + 3e3, t, t1, Q.dipHold, Q);
+      if (!x) break;
+      H.add(t, net(pe, x.px)); free = x.u + 5 * 60e3;
     }
   }
-  const sum = (v) => v.reduce((a, b) => a + b, 0);
-  return { n: halves[0].length + halves[1].length, h1: sum(halves[0]), h2: sum(halves[1]), total: sum(halves[0]) + sum(halves[1]) };
+  return H.get();
 }
-
-export const CRASH_GRID = [];
-for (const crashDrop of [0.2, 0.25, 0.3]) for (const crashFlat of [0.05, 0.1, 0.2]) for (const dipHold of [5, 10, 20])
-  for (const runStart of [1.1, 1.2]) for (const runTrail of [0.8, 0.85, 0.9])
-    CRASH_GRID.push({ crashDrop, crashFlat, dipHold: dipHold * 60e3, runStart, runTrail });
-
-// Adopt a crash/run param set only if: >= minTrades trades, positive in BOTH halves, and beats the current set's
-// total by max(0.10, 20%) (sums of per-trade returns, so 0.10 = +10 points over the window).
-export function tuneCrash(tape, current, minTrades = 8) {
-  const d = prepare(tape);
-  const cur = simulateCrash(d, current);
-  let best = null;
-  for (const Q of CRASH_GRID) { const r = simulateCrash(d, Q); if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q, r }; }
-  const ok = best && best.r.total > cur.total + Math.max(0.10, Math.abs(cur.total) * 0.2);
-  return { cur, best, adopt: ok ? best.Q : null };
-}
-
-// Survivors after a death, as traded: 20 s after each death, buy the survTop highest-priced stocks traded in the
-// last 30 min (never the dead one), hold survHold, run mode as in simulateCrash. deaths = [{ u, t }] from
-// data/deaths.jsonl; names maps external_id -> lowercased contestant name (to skip the dead).
+// Survivors as traded: 20 s after each death, the survTop highest-priced stocks traded in the last 30 min (never the
+// dead one: names = id -> lowercased name), sold by ride(survHold).
 export function simulateSurv({ paths, t0, t1 }, Q, deaths, names = {}) {
-  const { survTop, survHold, runStart, runTrail } = Q;
-  const net = (pe, px) => px / pe * (1 - FEE) ** 2 * (1 - 1e4 / (R0 * Math.sqrt(pe / 1000))) * (1 - 1e4 / (R0 * Math.sqrt(px / 1000))) - 1;
-  const tm = (t0 + t1) / 2, halves = [[], []], busyUntil = {};
+  const H = halves(t0, t1), busy = {};
   for (const d of deaths) {
     const t = d.t + 20e3;
     if (t < t0 + 30 * 60e3 || t > t1) continue;
-    const alive = Object.entries(paths).filter(([id, p]) => names[id] !== d.u && p.ts.some((x) => x > t - 30 * 60e3 && x <= t) && !(busyUntil[id] > t))
-      .map(([id, p]) => ({ id, p, price: priceAt(p, t) })).filter((x) => x.price).sort((a, b) => b.price - a.price).slice(0, survTop);
-    for (const { id, p, price: pe } of alive) {
-      let pk = pe, run = false, px = null, u;
-      for (u = t; u <= t1; u += 5e3) {
-        const x = priceAt(p, u); pk = Math.max(pk, x);
-        if (pk >= pe * runStart) run = true;
-        if ((!run && u - t >= survHold) || (run && (x < pk * runTrail || u - t >= 2 * 3600e3))) { px = x; break; }
-      }
-      if (px === null) continue;
-      busyUntil[id] = u;
-      halves[t < tm ? 0 : 1].push(net(pe, px));
-    }
+    const pick = Object.entries(paths).filter(([id, p]) => names[id] !== d.u && p.ts.some((x) => x > t - 30 * 60e3 && x <= t) && !(busy[id] > t))
+      .map(([id, p]) => ({ id, p, pe: priceAt(p, t) })).filter((x) => x.pe).sort((a, b) => b.pe - a.pe).slice(0, Q.survTop);
+    for (const { id, p, pe } of pick) { const x = ride(p, pe, t, t, t1, Q.survHold, Q); if (x) { busy[id] = x.u; H.add(t, net(pe, x.px)); } }
   }
-  const sum = (v) => v.reduce((a, b) => a + b, 0);
-  return { n: halves[0].length + halves[1].length, h1: sum(halves[0]), h2: sum(halves[1]), total: sum(halves[0]) + sum(halves[1]) };
+  return H.get();
 }
-
-// survTop 0 = strategy off: adopted when no setting is profitable in both halves and the current one loses
-export function tuneSurv(tape, current, deaths, names, minTrades = 8) {
-  const d = prepare(tape);
-  const cur = simulateSurv(d, current, deaths, names);
-  let best = null;
-  for (const survTop of [1, 2, 3]) for (const survHold of [10, 20, 30, 60]) {
-    const Q = { survTop, survHold: survHold * 60e3, runStart: current.runStart, runTrail: current.runTrail };
-    const r = simulateSurv(d, Q, deaths, names);
-    if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q: { survTop, survHold: Q.survHold }, r };
-  }
-  if (best && best.r.total > cur.total + Math.max(0.10, Math.abs(cur.total) * 0.2)) return { cur, best, adopt: best.Q };
-  if (!best && current.survTop > 0 && cur.n >= minTrades && cur.total < 0) return { cur, best, adopt: { survTop: 0 } };
-  return { cur, best, adopt: null };
-}
-
-// Top basket, as traded: every topReb, hold the topN highest-priced live stocks (traded in the last 30 min, no death
-// yet), buying min(topSize x cash, 1.5% of the pool reserve); sell one when its rank reaches topExit, or at its death
-// knock (worst case: after the -20%). Fees and own impact both ways. Returns Cx PnL of the window and of each half
-// (two separate runs), n = buys over the window. Starts from 866 Cx (the 18/10 balance).
+// Top basket as traded: every topReb hold the topN highest-priced live stocks (min(topSize x cash, 1.5% of the
+// reserve) each), sell at rank topExit or at the death knock. From 866 Cx; Cx PnL of the window and of each half.
 export function simulateTop({ paths, t0, t1 }, Q) {
-  const { topN, topExit, topReb, topSize = 0.15 } = Q;
+  const { topN, topExit, topReb, topSize = 0.15 } = Q, imp = (p, c) => c / (R0 * Math.sqrt(p / 1000));
   const run = (from, to) => {
     let cash = 86580, n = 0; const pos = {};
-    const imp = (p, c) => c / (R0 * Math.sqrt(p / 1000));
     const sell = (id, px) => { const v = pos[id] * px; cash += v * (1 - FEE) * (1 - imp(px, v)); delete pos[id]; };
     for (let t = from; t <= to && topN > 0; t += 60e3) {
       for (const id of Object.keys(pos)) if (paths[id].deathAt <= t) sell(id, priceAt(paths[id], t));
@@ -256,34 +146,40 @@ export function simulateTop({ paths, t0, t1 }, Q) {
         cash -= c; n++; pos[x.id] = c * (1 - FEE) * (1 - imp(x.now, c)) / x.now;
       }
     }
-    let v = cash;
-    for (const [id, sh] of Object.entries(pos)) { const px = priceAt(paths[id], to); v += sh * px * (1 - FEE) * (1 - imp(px, sh * px)); }
-    return { pnl: (v - 86580) / 100, n };
+    for (const [id, sh] of Object.entries(pos)) { const px = priceAt(paths[id], to); cash += sh * px * (1 - FEE) * (1 - imp(px, sh * px)); }
+    return { pnl: (cash - 86580) / 100, n };
   };
-  const from = t0 + 3600e3, mid = (from + t1) / 2; // first hour skipped: "traded in the last 30 min" needs history
+  const from = t0 + 3600e3, mid = (from + t1) / 2; // the first hour builds the "traded in 30 min" history
   if (from >= t1) return { n: 0, h1: 0, h2: 0, total: 0 };
   const all = run(from, t1);
   return { n: all.n, h1: run(from, mid).pnl, h2: run(mid, t1).pnl, total: all.pnl };
 }
 
-// Same rules as tuneSurv, in Cx: adopt a setting positive in both halves that beats the current one by
-// max(10 Cx, 20%); switch the basket off (topN 0) when the current one loses and no setting wins in both halves.
-export function tuneTop(tape, current, minTrades = 8) {
-  const d = prepare(tape);
-  const cur = simulateTop(d, current);
+// Self-tuning: the best grid setting with >= minTrades and a profit in both halves is adopted if it beats the
+// current one by max(floor, 20%); with none and a losing current one, `off` (strategy off) is adopted.
+function pick(grid, sim, cur, minTrades, floor, off) {
   let best = null;
-  for (const topN of [3, 5, 10]) for (const topReb of [15, 60]) {
-    const Q = { topN, topExit: 2 * topN, topReb: topReb * 60e3, topSize: current.topSize };
-    const r = simulateTop(d, Q);
-    if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q: { topN, topExit: Q.topExit, topReb: Q.topReb }, r };
-  }
-  if (best && best.r.total > cur.total + Math.max(10, Math.abs(cur.total) * 0.2)) return { cur, best, adopt: best.Q };
-  if (!best && current.topN > 0 && cur.n >= minTrades && cur.total < 0) return { cur, best, adopt: { topN: 0 } };
-  return { cur, best, adopt: null };
+  for (const Q of grid) { const r = sim(Q); if (r.n >= minTrades && r.h1 > 0 && r.h2 > 0 && (!best || r.total > best.r.total)) best = { Q, r }; }
+  if (best && best.r.total > cur.total + Math.max(floor, Math.abs(cur.total) * 0.2)) return { cur, best, adopt: best.Q };
+  return { cur, best, adopt: !best && off && cur.n >= minTrades && cur.total < 0 ? off : null };
+}
+const grid = (axes) => Object.entries(axes).reduce((acc, [k, vs]) => acc.flatMap((o) => vs.map((v) => ({ ...o, [k]: v }))), [{}]);
+const CRASH_GRID = grid({ crashDrop: [0.2, 0.25, 0.3], crashFlat: [0.05, 0.1, 0.2], dipHold: [5, 10, 20].map((m) => m * 60e3), runStart: [1.1, 1.2], runTrail: [0.8, 0.85, 0.9] });
+export function tuneCrash(tape, cur, minTrades = 8) {
+  const d = prepare(tape);
+  return pick(CRASH_GRID, (Q) => simulateCrash(d, Q), simulateCrash(d, cur), minTrades, 0.10, null);
+}
+export function tuneSurv(tape, cur, deaths, names, minTrades = 8) {
+  const d = prepare(tape), sim = (Q) => simulateSurv(d, { ...cur, ...Q }, deaths, names);
+  return pick(grid({ survTop: [1, 2, 3], survHold: [10, 20, 30, 60].map((m) => m * 60e3) }), sim, sim({}), minTrades, 0.10, cur.survTop > 0 && { survTop: 0 });
+}
+export function tuneTop(tape, cur, minTrades = 8) {
+  const d = prepare(tape), sim = (Q) => simulateTop(d, { ...cur, ...Q });
+  const g = grid({ topN: [3, 5, 10], topReb: [15, 60].map((m) => m * 60e3) }).map((q) => ({ topN: q.topN, topExit: 2 * q.topN, topReb: q.topReb }));
+  return pick(g, sim, sim({}), minTrades, 10, cur.topN > 0 && { topN: 0 });
 }
 
-// Kill-switch tally: closed round trips of a strategy (buy reason prefix) in trades.jsonl lines, counted from its
-// last re-arm (a `<prefix>_on` event), so a strategy the tuner switched back on starts a fresh trial.
+// Kill-switch tally: closed round trips of a strategy (buy reason prefix) since its last `<prefix>_on` re-arm.
 export function trialTally(lines, prefix) {
   const open = {}; let n = 0, pnl = 0;
   for (const l of lines.slice(lines.findLastIndex((x) => x.includes(`"ev":"${prefix}_on"`)) + 1)) {
@@ -294,32 +190,5 @@ export function trialTally(lines, prefix) {
   }
   return { n, pnl };
 }
-
-// Engine watchdog: stuck when nothing worked for 5 min outside an API block, or the session is lost for 3 min.
+// Watchdog: stuck when nothing worked for 5 min outside an API block, or the session is lost for 3 min.
 export const stuck = (now, lastOk, blockedUntil, authLostAt) => ({ stale: now - Math.max(lastOk, blockedUntil) > 5 * 60e3, lost: authLostAt > 0 && now - authLostAt > 3 * 60e3 });
-
-export const GRID = [];
-for (const lookback of [2, 5]) for (const entryMin of [0.05, 0.15, 0.3]) for (const entryMax of [0.6, 99])
-  for (const trail of [0.7, 0.8, 0.9]) for (const maxHold of [0, 10, 30]) for (const minBreadth of [0, 0.4, 0.6])
-    GRID.push({ lookback: lookback * 60e3, entryMin, entryMax, trail, maxHold: maxHold * 60e3, size: 0.25, minBreadth, dumpExit: true, dumpBreadth: 0.45 });
-
-// Walk-forward retune over the tape window. Returns the best params, or null if none clearly beats `current`.
-export function tune(tape, current, minTrades = 10) {
-  const d = prepare(tape);
-  const cur = simulate(d, current);
-  let best = null;
-  for (const P of GRID) { const r = simulate(d, P); if (!best || r.pnl > best.r.pnl) best = { P, r }; }
-  // guard rails: enough trades to mean something, and a clear margin over what runs now
-  const ok = best.r.n >= minTrades && best.r.pnl > 0 && best.r.pnl > cur.pnl + Math.max(2500, Math.abs(cur.pnl) * 0.2);
-  return { cur, best, adopt: ok ? best.P : null };
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const hours = Number(process.argv[2]);
-  const tape = loadTape(hours ? Date.now() - hours * 3600e3 : 0);
-  const d = prepare(tape);
-  const res = GRID.map((P) => ({ ...P, lookback: P.lookback / 60e3, maxHold: P.maxHold / 60e3, ...simulate(d, P) })).sort((a, b) => b.pnl - a.pnl);
-  console.log(`tape ${tape.length} trades, ${((d.t1 - d.t0) / 60e3).toFixed(0)} min, ${res.length} combos, profitable ${res.filter((r) => r.pnl > 0).length}`);
-  res.slice(0, 8).forEach((r) => console.log(JSON.stringify(r)));
-  console.log('WORST', JSON.stringify(res.at(-1)));
-}

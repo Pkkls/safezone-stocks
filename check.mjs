@@ -1,49 +1,7 @@
-// Self-check: backtest on the frozen opening tape must reproduce the reference PnL, and tune() must
-// refuse to adopt params that do not clearly beat the current ones. node check.mjs
+// Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
-import fs from 'node:fs';
-import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamText } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamText } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
-
-const ref = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-const d = prepare(ref);
-const P = { lookback: 2 * 60e3, entryMin: 0.15, entryMax: 99, trail: 0.8, maxHold: 10 * 60e3, size: 0.25 };
-// 119609 = value on this frozen file (3946 trades). The 3912-trade first fetch gave 124253 with both the
-// old and the refactored simulator; the gap is the 34 trades that fetch missed, not code.
-assert.strictEqual(simulate(d, P).pnl, 119609, 'reference PnL drifted: tape loading or simulation changed');
-
-const best = tune(ref, P);
-assert.ok(best.adopt === null || best.best.r.pnl > best.cur.pnl + 2500, 'tune adopted without margin');
-const worse = { ...P, lookback: 5 * 60e3, entryMin: 0.3, entryMax: 0.6 }; // worst combo on this tape
-assert.strictEqual(tune(ref, worse).adopt, null, 'best combo has 8 trades here: below 10 it must not be adopted');
-assert.ok(tune(ref, worse, 5).adopt, 'tune should replace a clearly worse param set');
-
-// breadth gate: at 0.6 the late (post-rush) tape must produce no trades, at 0 it trades
-const all = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-const late = prepare(all.filter((r) => r.t >= all[0].t + 15 * 60e3));
-assert.strictEqual(simulate(late, { ...P, minBreadth: 0.6 }).n, 0, 'breadth gate did not stand aside');
-assert.ok(simulate(late, { ...P, minBreadth: 0 }).n > 0, 'control: ungated run should trade');
-
-// dump exit: a held stock hit by a >= 5% sell while breadth is low must be sold at that step
-{
-  const t = 1e12, row = (e, dt, pb, pa, s = 'b') => ({ e, t: t + dt, pb, pa, s });
-  const tape = [row('a', 0, 1000, 1000), row('a', 60e3, 1000, 1300), row('a', 90e3, 1300, 1300), row('a', 200e3, 1300, 1200, 's'), row('a', 400e3, 1200, 1200)];
-  const Q = { lookback: 60e3, entryMin: 0.15, entryMax: 99, trail: 0.5, maxHold: 0, size: 0.25, minBreadth: 0, dumpExit: true, dumpBreadth: 2 };
-  assert.ok(simulate(prepare(tape), Q).n === 1, 'dump exit did not fire');
-  assert.ok(simulate(prepare(tape), { ...Q, dumpExit: false }).n === 0, 'control: without dump exit the position stays open');
-}
-
-// sim vs live: on the window the engine traded live ungated (20:27-20:45 UTC, 6 round trips, net +4.94, 2 wins),
-// the simulator must also see a losing phase (it gave -16409, 1/17) and the 0.6 breadth gate must stay out.
-{
-  const from = Date.parse('2026-10-17T20:27:05Z'), to = Date.parse('2026-10-17T20:45:00Z');
-  const tape = loadTape(0).filter((r) => r.t >= from - 6e5 && r.t <= to);
-  if (tape.length) {
-    const w = { ...prepare(tape), t0: from - 120e3, t1: to };
-    assert.ok(simulate(w, P).pnl < 0, 'simulator turned optimistic on the live losing window');
-    assert.strictEqual(simulate(w, { ...P, minBreadth: 0.6 }).n, 0, 'breadth gate would have traded the live losing window');
-  }
-}
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
 // Kick line: pnl is taken from the LAST successful buy of that name (11775 -> 14840 on 18/10)
@@ -95,7 +53,7 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   const Q = { crashDrop: 0.25, crashFlat: 0.1, dipHold: 600e3, runStart: 1.1, runTrail: 0.85 };
   const r = simulateCrash(prepare(crashTape), Q);
   assert.strictEqual(r.n, 1, 'crash not traded');
-  assert.ok(r.total > 0.2, 'crash rebound should be a clear win');
+  assert.ok(Math.abs(r.total - 0.3262) < 0.001, 'entry 600, run-mode exit at 840 (not at the 1000 peak): ' + r.total);
   assert.strictEqual(simulateCrash(prepare([...flat, row(210e3, 1000, 1000), row(2000e3, 1000, 1000)]), Q).n, 0, 'control: no crash, no trade');
   assert.strictEqual(tuneCrash(crashTape, Q).adopt, null, 'one trade must never be enough to adopt');
 }

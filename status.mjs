@@ -13,7 +13,7 @@ console.log('Last 10: ' + deaths.slice(-10).reverse().map((d) => `${hhmm(d.t)} $
 const log = lines('trades.jsonl');
 const scan = log.filter((e) => e.ev === 'scan').at(-1);
 const trades = log.filter((e) => /stock-market\/(buy|sell)/.test(e.ev) && e.status === 200);
-console.log(`Market breadth: ${scan?.breadth ?? '-'} at ${scan ? hhmm(scan.t) : '-'} (momentum buys at >= 0.6)`);
+console.log(`Market breadth: ${scan?.breadth ?? '-'} at ${scan ? hhmm(scan.t) : '-'}`);
 console.log(`Trades: ${trades.length}, last: ${trades.at(-1) ? `${hhmm(trades.at(-1).t)} ${trades.at(-1).ev.split('/')[1]} ${trades.at(-1).name} (${trades.at(-1).why})` : '-'}`);
 console.log(`API blocks: ${log.filter((e) => e.ev === 'blocked').length}`);
 // round trips per strategy (buy reason prefix: crash / surv / mom...), matched buy -> next sell of the same stock
