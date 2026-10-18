@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -114,7 +114,7 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.deepStrictEqual(stuck(t + 4 * m, t + 4 * m, 0, t), { stale: false, lost: true }, 'lost session not detected');
   assert.deepStrictEqual(stuck(t + 2 * m, t + 2 * m, 0, t), { stale: false, lost: false }, 'control: 2 min of 401 is tolerated');
 }
-// stream pages: 5 pages of at most 96 x 22, color layers on one grid, each with its content; positions sorted by value, yours labelled
+// stream pages: 6 pages of at most 94 x 22, color layers on one grid, each with its content; positions sorted by value, yours labelled
 {
   const me = { realized_pnl_cents: 50580, unrealized_pnl_cents: -120, holdings: [
     { external_id: 'a', name: 'Small', cost_basis_cents: 1000, current_value_cents: 900 },
@@ -127,33 +127,33 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     movers: [{ name: 'Up', ret: 0.2 }, { name: 'Down', ret: -0.1 }], ranking: [{ name: 'Top', price: 9000 }, { name: 'Next', price: 5000 }],
     strategies: { top: { n: 3, win: 2, pnl: 1500 } } });
   const Lay = raw.map(layers), plain = raw.map((p) => p.replace(/\x01.|\x02/g, '')), P = plain; // plain: what a viewer reads
-  assert.strictEqual(raw.length, 5);
-  for (const p of plain) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 96), 'page fits 96 x 22: ' + l[0]); }
+  assert.strictEqual(raw.length, 6);
+  for (const p of plain) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 94), 'page fits 94 x 22: ' + l[0]); }
   for (const [i, L] of Lay.entries()) for (const k of ['g', 'r', 'y', 'c']) assert.deepStrictEqual(L[k].split('\n').map((x) => x.length), L.w.split('\n').map((x) => x.length), `layer ${k} of page ${i + 1} on the same grid`);
   assert.match(Lay[0].g, /\n {49}\+5\.00 +\+25\.0%/, 'a gain is drawn in green, at its column');
   assert.match(Lay[0].r, /\n {49}-1\.00 +-10\.0%/, 'a loss is drawn in red');
   assert.doesNotMatch(Lay[0].g, /-1\.00/, 'control: a loss is never green');
-  assert.match(plain[4], /5\/5 {2}STATUS[\s\S]*\nx +##-{8} +20 - +\.\.\.\.\.[\s\S]*\nz +#{9}- +90 healing +S\.\.\.L/, 'status: weakest first, hp bar, sigil, shield and live flags');
-  assert.match(Lay[4].y, /S/, 'a shield is drawn in yellow');
+  assert.match(plain[5], /6\/6 {2}STATUS[\s\S]*\nx +##-{8} +20 - +\.\.\.\.\.[\s\S]*\nz +#{9}- +90 healing +S\.\.\.L/, 'status: weakest first, hp bar, sigil, shield and live flags');
+  assert.match(Lay[5].y, /\n {40}S/, 'a shield is drawn in yellow');
   // 70 alive: every one is on exactly one STATUS page (34 per page), the healthiest included (18/10: FloridaBoy, 110/110,
   // was cut by the 34-weakest page); the page counter follows
   {
     const many = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`p${String(i).padStart(2, '0')}`, { alive: true, hp: i + 1, max: 110, out: false }]));
     const pg = streamPages({ me, health: { ...many, gone: { alive: false, hp: 0, max: 100 } } }).map((p) => p.replace(/\x01.|\x02/g, ''));
-    assert.strictEqual(pg.length, 7, '4 pages + 3 STATUS pages for 70 alive');
-    assert.match(pg[6], /^7\/7 {2}STATUS 3\/3 \(weakest first, 70 alive\)/, 'status pages numbered');
-    for (const n of Object.keys(many)) assert.strictEqual(pg.slice(4).filter((p) => new RegExp(`\\n${n} `).test(p) || new RegExp(` ${n} `).test(p)).length, 1, `${n} on exactly one status page`);
-    assert.match(pg[6], /p69 +#{6}-{4} +70/, 'the healthiest (70/110) is on the last status page');
-    assert.ok(!pg.slice(4).some((p) => /gone/.test(p)), 'control: a dead contestant is on no status page');
-    for (const p of pg) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 96), 'status page fits 96 x 22'); }
+    assert.strictEqual(pg.length, 8, '5 pages + 3 STATUS pages for 70 alive');
+    assert.match(pg[7], /^8\/8 {2}STATUS 3\/3 \(70 alive\)/, 'status pages numbered');
+    for (const n of Object.keys(many)) assert.strictEqual(pg.slice(5).filter((p) => new RegExp(`\\n${n} `).test(p) || new RegExp(` ${n} `).test(p)).length, 1, `${n} on exactly one status page`);
+    assert.match(pg[7], /p69 +#{6}-{4} +70/, 'the healthiest (70/110) is on the last status page');
+    assert.ok(!pg.slice(5).some((p) => /gone/.test(p)), 'control: a dead contestant is on no status page');
+    for (const p of pg) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 94), 'status page fits 94 x 22'); }
   }
-  assert.match(plain[0], /^1\/5 {2}PORTFOLIO[\s\S]*Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Alive 2 {3}Bot up 3h05/);
-  assert.match(P[0], /\nBig +crash +20\.00 +25\.00 +\+5\.00 +\+25\.0%\nSmall +yours/, 'highest value first; control: a position the engine did not open is yours');
+  assert.match(plain[0], /^1\/6 {2}PORTFOLIO +next \[ {10}\] +data 03:05:00 UTC\nWhat the bot holds/, 'header: page, next-page bar, data time, then a line for viewers');
+  assert.match(P[0], /\nBig +crash +20\.00 +25\.00 +\+5\.00 +\+25\.0% +- +-\nSmall +yours/, 'highest value first; control: a position the engine did not open is yours');
   assert.match(P[1], /04:29 {2}buy {3}Big[\s\S]*top +3 +2 +\+15\.00/, 'orders and strategy PnL');
   assert.match(P[2], /RISING[^\n]*\nUp +\+20\.0%[^\n]*\n[^\n]*\nFALLING 5 MIN\nDown +-10\.0%/, 'control: a fall is never listed as rising');
   assert.match(P[2], /1\. Top +90\.00/);
-  assert.match(P[3], /IN DANGER[^\n]*\nx +20\/100[^\n]*newest +knife/, 'low hp listed (z at 90 hp is not), deaths newest first with their source');
-  assert.doesNotMatch(P[3], /\nz /, 'control: a healthy contestant is not in danger');
+  assert.match(P[4], /IN DANGER[^\n]*\nx +20\/100[^\n]*newest +knife/, 'low hp listed (z at 90 hp is not), deaths newest first with their source');
+  assert.doesNotMatch(P[4], /\nz /, 'control: a healthy contestant is not in danger');
   // revives (18/10): a revived contestant is alive again, and buyable; a death after the revive counts again
   {
     assert.ok(deadAfter(100) && !deadAfter(100, 200) && deadAfter(300, 200) && !deadAfter(undefined, 200), 'dead until revived, dead again after a new death');
@@ -163,10 +163,39 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     const rv = streamPages({ me, health: { back: { alive: true, hp: 45, max: 100, out: false } }, revived: { back: 2e12 },
       deaths: [{ u: 'back', t: 1e12, cause: 'damage', source: 'zone' }, { u: 'back', t: 2e12, revive: true }] });
     const rp = rv.map((p) => p.replace(/\x01.|\x02/g, '')), rl = rv.map(layers);
-    assert.match(rp[3], /DEATHS AND REVIVES[^\n]*\n[^\n]*back +REVIVED[^\n]*\n[^\n]*back +zone/, 'a revive is listed with the deaths, newest first');
-    assert.match(rl[3].g, /REVIVED/, 'a revive is drawn in green');
-    assert.match(rp[4], /\nback +[#-]{10} +45 - +\.\.\.\.\.R/, 'status: R flag on a revived contestant');
-    assert.doesNotMatch(plain[4], /^[xz] .*R$/m, 'control: no R flag without a revive');
+    assert.match(rp[4], /DEATHS AND REVIVES[^\n]*\n[^\n]*back +REVIVED[^\n]*\n[^\n]*back +zone/, 'a revive is listed with the deaths, newest first');
+    assert.match(rl[4].g, /REVIVED/, 'a revive is drawn in green');
+    assert.match(rp[5], /\nback +[#-]{10} +45 - +\.\.\.\.\.R/, 'status: R flag on a revived contestant');
+    assert.doesNotMatch(plain[5], /^[xz] .*R$/m, 'control: no R flag without a revive');
+  }
+  // top basket tracker: rank by calm price, held / next marks, refused pumps with their ratio
+  {
+    const bp = streamPages({ me, basket: [{ name: 'Calm', price: 9000, calm: 8800, ch5: 0.02, held: true }, { name: 'Fresh', price: 5000, calm: 5000, ch5: null, held: false }],
+      pumps: [{ t: 2e12, name: 'Pumped', ratio: 9.8 }] }).map((p) => p.replace(/\x01.|\x02/g, ''));
+    assert.match(bp[3], /TOP BASKET TRACKER[\s\S]*\n 1 +Calm +88\.00 +90\.00 +\+2\.0% HELD[^\n]*Pumped +x9\.8\n 2 +Fresh +50\.00 +50\.00 +- NEXT/, 'basket: calm, now, 5 min, held or next; pumps refused');
+    assert.match(streamPages({ me }).map((p) => p.replace(/\x01.|\x02/g, ''))[3], /no ranking yet[^\n]*none so far/, 'control: empty basket and no pump');
+  }
+  // right panel: 24 h value chart, mascot mood, bubble, bot log
+  {
+    const t0 = 1e12, pts = Array.from({ length: 100 }, (_, i) => ({ t: t0 + i * 60e3, value: 1000 + i }));
+    const ch = equityChart(pts, t0 + 99 * 60e3, 10, 2, 100 * 60e3);
+    assert.deepStrictEqual(ch.rows.map((r) => r.length), [10, 10], 'chart: w columns x h rows');
+    assert.ok(ch.rows[1].startsWith('\u2581') && ch.rows[0].endsWith('\u2588') && ch.lo === 1009 && ch.hi === 1099, 'rising: low bottom-left, full top-right (lo, hi: of the columns)');
+    assert.strictEqual(equityChart(pts.slice(0, 1), t0, 10, 2), null, 'control: one point is no chart');
+    assert.strictEqual(moodOf(pts, t0 + 99 * 60e3), 'happy', 'up 1.5% in 15 min: happy');
+    assert.strictEqual(moodOf(pts.map((p) => ({ ...p, value: 3000 - p.value })), t0 + 99 * 60e3), 'sad', 'control: down: sad');
+    assert.strictEqual(moodOf(pts.map((p) => ({ ...p, value: 1000 })), t0 + 99 * 60e3), 'cool', 'control: flat: cool');
+    for (const m of ['happy', 'cool', 'sad']) { const ps = mascot(m); assert.ok(ps.length === 4 && ps.every((p) => p.split('\n').length === 8 && p.includes('.-^-.')), m + ': 4 poses in the hat'); }
+    const b = bubble('SOLD SomeoneWithALongName +137.20 Cx yeehaw').trimEnd().split('\n');
+    assert.ok(b.length === 4 && new Set(b.map((x) => x.length)).size === 1, 'bubble: two lines in a closed box: ' + JSON.stringify(b));
+    const own = ownOrders([JSON.stringify({ t: '2026-10-18T21:00:11Z', ev: 'stock-market/buy', name: 'vimp', why: 'top #4', status: 200, res: { cash_cents: 9318 } }),
+      JSON.stringify({ t: '2026-10-18T21:05:33Z', ev: 'stock-market/sell', name: 'vimp', why: 'toprank 43', status: 200, res: { cash_cents: 897 } }),
+      JSON.stringify({ t: '2026-10-18T21:05:34Z', ev: 'stock-market/buy', name: 'x', why: 'top #4', status: 429, res: {} })]);
+    assert.deepStrictEqual(own.trips, [{ t: Date.parse('2026-10-18T21:05:33Z'), name: 'vimp', k: 'top', pnl: -8421 }], 'round trip with its strategy; control: a 429 is no order');
+    const lg = botLog(own.orders, [{ u: 'gone', t: Date.parse('2026-10-18T21:08:00Z'), source: 'nuke' }, { u: 'back', t: Date.parse('2026-10-18T21:09:00Z'), revive: true }], [{ t: Date.parse('2026-10-18T21:10:00Z'), name: 'Pumped', ratio: 9.8 }]);
+    const ll = layers(lg, 50);
+    assert.match(lg.replace(/\x01.|\x02/g, ''), /^21:10 SKIP Pumped +pump x9\.8\n21:09 BACK back +revived\n21:08 RIP  gone +nuke *\n21:05 SELL vimp +-84\.21\n21:00 BUY  vimp +93\.18\n$/, 'bot log newest first');
+    assert.ok(ll.r.includes('-84.21') && !ll.g.includes('-84.21') && ll.y.includes('SKIP') && ll.lw === undefined && lg.split('\n').every((x) => x.replace(/\x01.|\x02/g, '').length <= 42), 'log colors and width');
   }
   const tick = streamTicker({ me, names: { b: 'Big' }, health: { x: { alive: true }, y: { alive: false } }, movers: [{ name: 'Up', ret: 0.2 }, { name: 'Down', ret: -0.1 }] });
   assert.match(tick, /^CX STOCK BOT +\| +REALIZED \+505\.80 Cx +\| +RISING {2}Up \+20\.0% +\| +FALLING {2}Down -10\.0% +\| +LAST ORDERS {2}04:29 buy Big 20\.00 Cx +\| +ALIVE 1 /);

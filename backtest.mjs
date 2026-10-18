@@ -51,16 +51,19 @@ export function decodeHealth(frames) {
   return out;
 }
 
-// Stream pages: the engine pushes one every 10 s and moves to the next every 20 s (96 columns x 22 lines, 1280x720 at
-// 17 px DejaVu Mono, drawn by ffmpeg on the streaming box). Colors are inline marks, \x01 + one of g (gain, healthy),
+// Stream pages: the engine pushes the current one every 2 s and moves to the next every 20 s (94 columns x 22 lines,
+// 15 px DejaVu Mono on the left of a 1280x720 frame, drawn by ffmpeg on the streaming box; stream/run.sh has the
+// layout). Colors are inline marks, \x01 + one of g (gain, healthy),
 // r (loss, danger, death), y (warning, shield), c (titles) and \x02 to close; layers() splits a page into one
 // space-padded text per color so ffmpeg can stack them, one drawtext per color. d = { me, names, health, roster
 // { name: { sigil, live } }, breadth, startedAt, now, kindOf(id) -> strategy ('' = opened by hand), deaths
 // [{ u, t, source }] newest last, movers [{ name, ret }], ranking [{ name, price }] highest first, strategies
-// { prefix: { n, win, pnl } } }.
+// { prefix: { n, win, pnl } }, trips [{ t, name, k, pnl }] closed round trips, basket [{ name, price, calm, ch5, held }]
+// by calm price, pumps [{ t, name, ratio }] newest last, revived { name: t } }.
 const col = (k, x) => `\x01${k}${x}\x02`, vis = (x) => x.replace(/\x01.|\x02/g, '');
 export const LAYERS = ['w', 'g', 'r', 'y', 'c'];
-export function layers(text) {
+export const START_CASH = 60746; // balance before the first order on 17/10 (45560 after a 15186 buy)
+export function layers(text, anchor = 140) {
   const out = Object.fromEntries(LAYERS.map((k) => [k, '']));
   let cur = 'w';
   for (let i = 0; i < text.length; i++) {
@@ -70,41 +73,53 @@ export function layers(text) {
     for (const k of LAYERS) out[k] += ch === '\n' ? '\n' : k === cur ? ch : ' ';
   }
   // ffmpeg 4.4 drawtext places lines from the glyphs a text contains, so layers with different glyphs drift ~10 px
-  // apart: the same "|" at column 95 of the first line in every layer gives them all the same extent (the last one
-  // drawn, titles, shows it).
-  for (const k of LAYERS) { const [first, ...rest] = out[k].split('\n'); out[k] = [first.padEnd(95) + '|', ...rest].join('\n'); }
+  // apart: the same "|" at column `anchor` of the first line in every layer gives them all the same extent; past the
+  // right edge of the frame (140 columns from the page, 50 from the bot log) it is measured but never seen.
+  for (const k of LAYERS) { const [first, ...rest] = out[k].split('\n'); out[k] = [first.padEnd(anchor) + '|', ...rest].join('\n'); }
   return out;
 }
 // dead since `since`: a death after it, with no revive after that death (revives exist since 18/10)
 export const deadAfter = (died = 0, revived = 0, since = 0) => died > since && revived < died;
 
 export function streamPages(d) {
-  const { me, names = {}, health = {}, roster = {}, revived = {}, breadth = 0, startedAt = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {} } = d;
+  const { me, names = {}, health = {}, roster = {}, revived = {}, breadth = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {},
+    trips = [], basket = [], pumps = [], entryAt = {} } = d;
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
   const gr = (v, x) => col(v >= 0 ? 'g' : 'r', x), hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
+  const age = (t) => { const m = Math.floor((now - t) / 60e3); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${Math.floor(m / 1440)}d${Math.floor((m % 1440) / 60)}h`; };
   // every alive contestant gets a status line, 34 per page: 18/10 the page kept only the 34 weakest of 67 alive, so a
   // healthy one (FloridaBoy, 110/110) never showed. One STATUS page per 34, weakest first across them.
-  const PER = 34, aliveN = Object.values(health).filter((h) => h.alive).length, statusN = Math.max(1, Math.ceil(aliveN / PER));
-  const up = Math.floor((now - startedAt) / 60e3), alive = aliveN, N = 4 + statusN;
-  const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => { const l = a[i] || ''; return (l + ' '.repeat(Math.max(0, 50 - vis(l).length)) + (b[i] || '')).trimEnd(); });
-  const page = (i, title, body) => [col('c', `${i}/${N}  ${title}`.padEnd(75)) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
-    `Realized ${gr(me.realized_pnl_cents, s(me.realized_pnl_cents) + ' Cx')}   Open ${gr(me.unrealized_pnl_cents, s(me.unrealized_pnl_cents) + ' Cx')}   Positions ${me.holdings.length}   Alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
-    '', ...body.slice(0, 19)].join('\n') + '\n';
+  const PER = 34, aliveN = Object.values(health).filter((h) => h.alive).length, statusN = Math.max(1, Math.ceil(aliveN / PER)), N = 5 + statusN;
+  const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => { const l = a[i] || ''; return (l + ' '.repeat(Math.max(0, 48 - vis(l).length)) + (b[i] || '')).trimEnd(); });
+  // header: page k/N and title, a bar that fills until the next page (20 s), data time; then one line for viewers
+  const fill = Math.floor((now % 20e3) / 2e3);
+  const page = (i, title, sub, body) => [col('c', `${i}/${N}  ${title}`.padEnd(54)) + `next [${'='.repeat(fill)}${' '.repeat(10 - fill)}]   data ${new Date(now).toISOString().slice(11, 19)} UTC`,
+    col('y', sub), '', ...body.slice(0, 19)].join('\n') + '\n';
   const hpCol = (h) => (h.hp < h.max * 0.35 ? 'r' : h.hp < h.max * 0.7 ? 'y' : 'g');
   const bar = (h) => col(hpCol(h), '#'.repeat(Math.round((10 * h.hp) / h.max))) + '-'.repeat(10 - Math.round((10 * h.hp) / h.max));
+  const hpTxt = (n) => { const h = health[String(n).toLowerCase()]; return h ? col(h.alive ? hpCol(h) : 'r', (h.alive ? `${h.hp}/${h.max}` : 'dead').padStart(7)) : '      -'; };
 
-  const pos = [col('c', 'POSITION          TYPE       COST     VALUE       P/L      %')];
+  const pos = [col('c', 'POSITION          TYPE       COST     VALUE       P/L      %     HP   HELD')];
   for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 18)) {
-    const pl = h.current_value_cents - h.cost_basis_cents;
-    pos.push(`${pad(h.name, 17)} ${pad(kindOf(h.external_id) || 'yours', 6)} ${c(h.cost_basis_cents).padStart(9)} ${c(h.current_value_cents).padStart(9)} ${gr(pl, s(pl).padStart(9))} ${gr(pl, pct(h.cost_basis_cents ? pl / h.cost_basis_cents : 0).padStart(7))}`);
+    const pl = h.current_value_cents - h.cost_basis_cents, at = entryAt[h.external_id];
+    pos.push(`${pad(h.name, 17)} ${pad(kindOf(h.external_id) || 'yours', 6)} ${c(h.cost_basis_cents).padStart(9)} ${c(h.current_value_cents).padStart(9)} ${gr(pl, s(pl).padStart(9))} ${gr(pl, pct(h.cost_basis_cents ? pl / h.cost_basis_cents : 0).padStart(7))} ${hpTxt(h.name)} ${(at ? age(at) : '-').padStart(6)}`);
   }
   const orders = [col('c', 'LAST ORDERS (UTC)')];
   for (const t of (me.trades || []).slice(0, 14)) orders.push(`${hm(t.occurred_at)}  ${col(t.side === 'buy' ? 'g' : 'r', pad(t.side, 4))}  ${pad(names[t.external_id] || '?', 16)} ${c(t.cash_cents).padStart(8)} Cx`);
   const strat = [col('c', 'STRATEGY   TRIPS   WON        PNL')];
   for (const [k, r] of Object.entries(strategies)) strat.push(`${pad(k, 10)} ${String(r.n).padStart(5)} ${String(r.win).padStart(5)} ${gr(r.pnl, s(r.pnl).padStart(10))}`);
+  const byPnl = [...trips].sort((a, b) => b.pnl - a.pnl), trip = (x) => `${hm(x.t)}  ${pad(x.name, 16)} ${pad(x.k, 5)} ${gr(x.pnl, s(x.pnl).padStart(9))}`;
+  if (trips.length) strat.push('', col('c', 'BEST TRADES'), ...byPnl.slice(0, 4).filter((x) => x.pnl > 0).map(trip), '', col('c', 'WORST TRADES'), ...byPnl.slice(-4).reverse().filter((x) => x.pnl < 0).map(trip));
   const mv = [...movers].sort((a, b) => b.ret - a.ret), rows = (v) => v.map((m) => `${pad(m.name, 20)} ${gr(m.ret, pct(m.ret).padStart(8))}`);
   const market = [col('c', `RISING 5 MIN (${Math.round(breadth * 100)} pct of the market)`), ...rows(mv.filter((m) => m.ret > 0).slice(0, 8)), '', col('c', 'FALLING 5 MIN'), ...rows([...mv].reverse().filter((m) => m.ret < 0).slice(0, 8))];
   const rank = [col('c', 'MOST EXPENSIVE        PRICE'), ...ranking.slice(0, 18).map((r, i) => `${String(i + 1).padStart(2)}. ${pad(r.name, 17)} ${c(r.price).padStart(7)}`)];
+  // top basket tracker: the ranking the bot buys from (calm price), what it holds, and the pumps it refused
+  const bk = [col('c', ' #  BASKET RANK      CALM     NOW   5 MIN')];
+  basket.slice(0, 18).forEach((x, i) => bk.push(`${String(i + 1).padStart(2)}  ${pad(x.name, 14)} ${c(x.calm).padStart(7)} ${c(x.price).padStart(7)} ${x.ch5 == null ? '      -' : gr(x.ch5, pct(x.ch5).padStart(7))} ${x.held ? col('g', 'HELD') : i < 10 ? col('y', 'NEXT') : ''}`));
+  if (bk.length === 1) bk.push('no ranking yet');
+  const pw = [col('c', 'PUMPS IGNORED (UTC)       PUMP'), ...pumps.slice(-14).reverse().map((x) => `${hm(x.t)}  ${pad(x.name, 16)} ${col('y', `x${x.ratio.toFixed(1)}`.padStart(6))}`)];
+  if (pw.length === 1) pw.push(col('g', 'none so far'));
+  pw.push('', col('c', 'A pump: price far above its own'), col('c', '5 min low. The bot ranks on that'), col('c', 'low, so a pump never gets in.'));
   const danger = [col('c', 'IN DANGER (hp < 35% or out)      HP')];
   for (const [u, h] of Object.entries(health).filter(([, h]) => h.alive && (h.out || h.hp < h.max * 0.35)).sort((a, b) => a[1].hp / a[1].max - b[1].hp / b[1].max).slice(0, 18))
     danger.push(`${pad(u, 26)} ${col('r', `${h.hp}/${h.max}`.padStart(7))}${h.out ? col('r', '  out') : ''}`);
@@ -117,12 +132,79 @@ export function streamPages(d) {
     return `${pad(u, 13)} ${bar(h)} ${String(h.hp).padStart(3)} ${pad(r.sigil || '-', 10)} ${flag(h.shield, 'y', 'S')}${flag(h.poison, 'r', 'P')}${flag(h.drone, 'r', 'D')}${flag(h.out, 'r', 'O')}${flag(r.live, 'g', 'L')}${flag(revived[u], 'g', 'R')}`;
   });
   const head = col('c', 'NAME          HP BAR      HP SIGIL      SPDOLR');
-  const legend = col('c', 'S') + ' shield (armor)  ' + col('c', 'P') + ' poisoned  ' + col('c', 'D') + ' drone incoming  ' + col('c', 'O') + ' outside the zone  ' + col('c', 'L') + ' live  ' + col('c', 'R') + ' revived';
+  const legend = col('c', 'S') + ' shield  ' + col('c', 'P') + ' poisoned  ' + col('c', 'D') + ' drone incoming  ' + col('c', 'O') + ' outside the zone  ' + col('c', 'L') + ' live  ' + col('c', 'R') + ' revived';
   const status = Array.from({ length: statusN }, (_, k) => {
     const part = st.slice(k * PER, (k + 1) * PER);
-    return page(5 + k, `STATUS${statusN > 1 ? ` ${k + 1}/${statusN}` : ''} (weakest first, ${aliveN} alive)`, [...two([head, ...part.slice(0, 17)], [head, ...part.slice(17)]), legend]);
+    return page(6 + k, `STATUS${statusN > 1 ? ` ${k + 1}/${statusN}` : ''} (${aliveN} alive)`, 'Every contestant still in the game, weakest first: HP, class and what is happening to them',
+      [...two([head, ...part.slice(0, 17)], [head, ...part.slice(17)]), legend]);
   });
-  return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead)), ...status];
+  return [page(1, 'PORTFOLIO', 'What the bot holds right now, biggest first (type = strategy that bought it)', pos),
+    page(2, 'ACTIVITY', 'Every order it placed, and what each strategy made once sold', two(orders, strat)),
+    page(3, 'MARKET', 'Who moves in the last 5 minutes, and the most expensive stocks', two(market, rank)),
+    page(4, 'TOP BASKET TRACKER', 'The bot holds the 10 priciest live stocks, ranked on a calm price', two(bk, pw)),
+    page(5, 'CONTESTANTS', 'A death knocks the stock about 20% down: the bot sells first', two(danger, dead)), ...status];
+}
+
+// Right panel of the stream. Total value over `span` as block characters, w columns x h rows (the last value of each
+// column's time slice, carried over gaps); null with under 2 points. ASCII-free on purpose: one color, one drawtext.
+export function equityChart(points, now, w = 44, h = 6, span = 24 * 3600e3) {
+  const v = points.filter((p) => p.value != null && p.t > now - span && p.t <= now);
+  if (v.length < 2) return null;
+  const cols = []; let k = 0, last = null;
+  for (let i = 0; i < w; i++) { const end = now - span + ((i + 1) * span) / w; while (k < v.length && v[k].t <= end) last = v[k++].value; cols.push(last); }
+  const vals = cols.filter((x) => x != null), lo = Math.min(...vals), hi = Math.max(...vals), lev = h * 8;
+  const q = cols.map((x) => (x == null ? -1 : hi === lo ? lev / 2 : Math.round(((x - lo) / (hi - lo)) * (lev - 1)) + 1));
+  const B = ' ▁▂▃▄▅▆▇█', rows = [];
+  for (let r = h - 1; r >= 0; r--) rows.push(q.map((n) => (n < 0 ? ' ' : B[Math.max(0, Math.min(8, n - r * 8))])).join(''));
+  return { rows, lo, hi, first: vals[0], last: vals.at(-1) };
+}
+// The CX mascot, in a Houston cowboy hat. Mood from the total value 15 min ago: happy (up 0.5%+), sad (down 0.5%+),
+// cool otherwise. Four poses each, cycled 4 times a second by run.sh.
+const HAT = ['     .-^-.', '  __/_____\\__'];
+const POSES = {
+  happy: [['\\  (8^_^8)  /', ' \\_| CX |_/', '   |____|', '   /    \\', '  /      \\'], ['   (8^o^8)', ' __| CX |__/', '   |____|', '   /    \\', '  |      \\'],
+    ['   (8^_^8)', '  /| CX |\\', ' / |____| \\', '   /    \\', '  /      |'], ['\\__(8^_^8)', '   | CX |__', '   |____|  \\', '   /    \\', '  /      |']],
+  cool: [['\\  (8-_-8)  /', ' \\_| CX |_/', '   |____|', '   /    \\', '  /      \\'], ['   (8-_-8)', ' __| CX |__/', '   |____|', '   /    \\', '  |      \\'],
+    ['   (8-_-8)', '  /| CX |\\', ' / |____| \\', '   /    \\', '  /      |'], ['   (8-_-8)', '\\__| CX |__', '   |____|', '   /    \\', '  /      |']],
+  sad: [["   (8;_;8) '", '   | CX |', '  /|____|\\', '   /    \\', '  |      |'], ['   (8T_T8)', '   | CX |', '  /|____|\\', '   /    \\', '  |      |'],
+    ["   (8;_;8)  '", '   | CX |', '  /|____|\\', '   /    \\', '  |      |'], ['   (8T_T8) ,', '   | CX |', '  /|____|\\', '   /    \\', '  |      |']],
+};
+export const moodOf = (points, now) => {
+  const v = points.filter((p) => p.value != null && p.t <= now), last = v.at(-1), then = v.findLast((p) => p.t <= now - 15 * 60e3);
+  if (!last || !then) return 'cool';
+  const r = last.value / then.value - 1;
+  return r >= 0.005 ? 'happy' : r <= -0.005 ? 'sad' : 'cool';
+};
+export const mascot = (mood) => POSES[mood].map((p) => [...HAT, ...p.map((x) => ' ' + x)].join('\n') + '\n');
+// What the mascot says: the bot's last move within 2 min, else a line for its mood. Two lines of at most w chars.
+export function bubble(text, w = 22) {
+  const words = String(text).split(' '), l = [''];
+  for (const x of words) { if ((l.at(-1) + ' ' + x).trim().length > w && l.at(-1)) l.push(''); l[l.length - 1] = (l.at(-1) + ' ' + x).trim().slice(0, w); }
+  const L = l.slice(0, 2).map((x) => x.padEnd(w));
+  return [` .${'-'.repeat(w + 1)}.`, ...L.map((x, i) => `${i === 0 ? '<' : '|'} ${x} |`), ` '${'-'.repeat(w + 1)}'`].join('\n') + '\n';
+}
+// Bot log for the right panel, newest first, at most 42 columns: own orders (sells with their net PnL), deaths,
+// revives and refused pumps. orders [{ t, side, name, cash, pnl? }].
+export function botLog(orders, deaths, pumps, n = 6) {
+  const hm = (t) => new Date(t).toISOString().slice(11, 16), pad = (x, k) => String(x).slice(0, k).padEnd(k), c = (x) => (x / 100).toFixed(2);
+  const ev = [...orders.map((o) => ({ t: o.t, l: o.side === 'buy' ? `${hm(o.t)} BUY  ${pad(o.name, 16)} ${c(o.cash).padStart(8)}`
+      : `${hm(o.t)} ${col(o.pnl == null || o.pnl >= 0 ? 'g' : 'r', `SELL ${pad(o.name, 16)} ${o.pnl == null ? c(o.cash).padStart(8) : ((o.pnl >= 0 ? '+' : '') + c(o.pnl)).padStart(8)}`)}` })),
+    ...deaths.map((x) => ({ t: x.t, l: `${hm(x.t)} ${x.revive ? col('g', `BACK ${pad(x.u, 16)}  revived`) : col('r', `RIP  ${pad(x.u, 16)} ${pad(x.source || x.cause || '', 8)}`)}` })),
+    ...pumps.map((x) => ({ t: x.t, l: `${hm(x.t)} ${col('y', `SKIP ${pad(x.name, 16)} pump x${x.ratio.toFixed(1)}`)}` }))];
+  return ev.sort((a, b) => b.t - a.t).slice(0, n).map((x) => x.l).join('\n') + '\n';
+}
+// Own orders and closed round trips from trades.jsonl lines (buy reason prefix = strategy), for the log and the pages.
+export function ownOrders(lines) {
+  const out = [], trips = [], open = {};
+  for (const l of lines) {
+    if (!l.includes('"status":200') || !/"ev":"stock-market\/(buy|sell)"/.test(l)) continue;
+    const e = JSON.parse(l), t = Date.parse(e.t), cash = e.res?.cash_cents ?? 0;
+    if (e.ev.endsWith('buy')) { open[e.name] = { cash, k: String(e.why).split(' ')[0] }; out.push({ t, side: 'buy', name: e.name, cash }); continue; }
+    const b = open[e.name], pnl = b ? cash - b.cash : null;
+    out.push({ t, side: 'sell', name: e.name, cash, pnl });
+    if (b) { trips.push({ t, name: e.name, k: b.k, pnl }); delete open[e.name]; }
+  }
+  return { orders: out, trips };
 }
 
 // Scrolling ticker line for the stream (same d as streamPages): PnL, top movers, last orders, alive count. ASCII only.

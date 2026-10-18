@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -184,7 +184,7 @@ function trialOn(prefix) {
 // Exits, every 5 s. Manual positions: trail, death, hp, elimination, dump; never on time. Engine positions: crash ('dip')
 // and survivor buys sell on time unless in run mode (peak >= runStart x entry: runTrail trail, RUN_HOLD cap); the top
 // basket sells on rank (scan). All: status, death, hp, elimination. /me 500s: last holdings, repriced one by one.
-let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastBreadth = 0, names = {}, movers = [], ranking = [];
+let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastBreadth = 0, names = {}, movers = [], ranking = [], basket = [], pumps = [];
 const lastPrice = {}, status = {}, eliminated = {}, lastTradeAt = {}, STARTED = Date.now();
 async function guard() {
   const r = await api('stock-market/me');
@@ -237,37 +237,65 @@ function writeLive() {
   if (me && Date.now() - lastEquity >= 60e3) {
     lastEquity = Date.now();
     fs.appendFileSync('data/equity.jsonl', JSON.stringify({ t: lastEquity, value: lastCash == null ? null : lastCash + me.portfolio_value_cents, cash: lastCash, held: me.portfolio_value_cents, realized: me.realized_pnl_cents, unrealized: me.unrealized_pnl_cents, n: me.holdings.length }) + '\n');
+    eqPts.push({ t: lastEquity, value: lastCash == null ? null : lastCash + me.portfolio_value_cents });
+    while (eqPts[0].t < lastEquity - 25 * 3600e3) eqPts.shift();
   }
 }
 
-// Stream, every 2 s: the ticker and the current page (a new one every 20 s) split into one text per color, each after
-// an "@@name" line and closed by "@@end", written to ONE long-lived ssh to STREAM_SSH (no handshake per frame). There
-// awk writes ticker.txt, dash.txt (white), g/r/y/c.txt and art.txt, each replaced whole at "@@end", drawn by
-// stream/run.sh. A dead connection is reopened on the next tick.
+// Stream, every 2 s: the ticker, the current page (a new one every 20 s) split into one text per color, the KPI tiles,
+// the 24 h value chart, the mascot (poses of the current mood, in that mood's color, the others blanked), its speech
+// bubble and the bot log. Each text goes after an "@@name" line (lowercase letters), the batch is closed by "@@end",
+// written to ONE long-lived ssh to STREAM_SSH (no handshake per frame), and only the texts that changed are sent.
+// There awk replaces each <name>.txt whole at "@@end"; stream/run.sh draws them. A dead connection is reopened (and
+// every text resent) on the next tick.
 const SPLIT = 'cd szdash && exec awk \'/^@@end$/ { for (k in seen) { close(k ".tmp"); system("mv -f " k ".tmp " k ".txt") } delete seen; next } /^@@[a-z]+$/ { f = substr($0, 3); seen[f] = 1; printf "" > (f ".tmp"); next } { print > (f ".tmp") }\'';
-let pipe = null;
+let pipe = null, sent = {};
+const eqPts = fs.existsSync('data/equity.jsonl') ? fs.readFileSync('data/equity.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((p) => p.t > Date.now() - 25 * 3600e3) : [];
+const SAY = { happy: ['YEEHAW! the bag is growing', 'to the moon, partner'], cool: ['just vibin in Houston', 'watching every trade'], sad: ['rough ride, partner', 'HODL... HODL...'] };
 function pushStream() {
   if (!me || !process.env.STREAM_SSH) return;
   if (!pipe) {
+    sent = {};
     pipe = spawn(process.env.STREAM_SSH_BIN || 'ssh', ['-o', 'ServerAliveInterval=30', process.env.STREAM_SSH, SPLIT], { stdio: ['pipe', 'ignore', 'ignore'] });
     const drop = (e) => { if (e) log({ ev: 'stream_err', msg: String(e.message || e) }); pipe = null; };
     pipe.on('error', drop); pipe.on('exit', () => drop()); pipe.stdin.on('error', drop);
   }
-  const d = { me, names, health, roster, revived: revivedAt, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
-    strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
-  const i = Math.floor(Date.now() / 20e3) % pages.length, L = layers(pages[i]);
+  const now = Date.now(), lines = fs.readFileSync(LOG, 'utf8').split('\n'), { orders, trips } = ownOrders(lines);
+  const d = { me, names, health, roster, revived: revivedAt, breadth: lastBreadth, startedAt: STARTED, now, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
+    strategies: roundTrips(lines, ['top', 'crash', 'surv', 'dip']), trips, basket, pumps, entryAt: state.entryAt }, pages = streamPages(d);
+  const i = Math.floor(now / 20e3) % pages.length, L = layers(pages[i]);
   // profit overlay: total PnL (realized + open) big in the header, green when positive (pg) or red (pr), detail in ps
   const cx = (x) => `${x >= 0 ? '+' : '-'}${(Math.abs(x) / 100).toFixed(2)}`, total = me.realized_pnl_cents + me.unrealized_pnl_cents;
-  const P = { pg: total >= 0 ? `PROFIT ${cx(total)} Cx` : ' ', pr: total < 0 ? `PROFIT ${cx(total)} Cx` : ' ', ps: `realized ${cx(me.realized_pnl_cents)}   open ${cx(me.unrealized_pnl_cents)}` };
-  pipe?.stdin.write(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c, art: ARTS[i % ARTS.length], ...P }).map(([k, v]) => `@@${k}\n${v}\n`.replace(/\n\n$/, '\n')).join('') + '@@end\n');
+  const out = { pg: total >= 0 ? `PROFIT ${cx(total)} Cx` : ' ', pr: total < 0 ? `PROFIT ${cx(total)} Cx` : ' ', ps: `realized ${cx(me.realized_pnl_cents)}   open ${cx(me.unrealized_pnl_cents)}` };
+  Object.assign(out, { ticker: streamTicker(d), dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c });
+  // KPI tiles (labels are in run.sh)
+  const k = (x) => Math.round(x / 100).toLocaleString('en-US'), value = lastCash == null ? null : lastCash + me.portfolio_value_cents;
+  const won = trips.filter((t) => t.pnl > 0).length, left = Math.max(0, END - now), alive = Object.values(health).filter((h) => h.alive).length;
+  Object.assign(out, { ka: value == null ? '-' : `${k(value)} Cx`, kb: value == null ? '-' : `${value >= START_CASH ? '+' : ''}${Math.round((value / START_CASH - 1) * 100)}%`,
+    kc: lastCash == null ? '-' : `${k(lastCash)} Cx`, kd: `${k(me.portfolio_value_cents)} Cx`, ke: String(me.holdings.length), kf: `${won}/${trips.length}`,
+    kg: `${alive}/${Object.keys(roster).length || '-'}`, kh: `${Math.floor(left / 86400e3)}d ${Math.floor((left % 86400e3) / 3600e3)}h` });
+  // 24 h value chart, green when up over the window, red when down
+  const eq = equityChart(eqPts, now), up = !eq || eq.last >= eq.first;
+  Object.assign(out, { eqg: eq && up ? eq.rows.join('\n') : ' ', eqr: eq && !up ? eq.rows.join('\n') : ' ',
+    eqb: eq ? `low ${k(eq.lo)}   high ${k(eq.hi)}   now ${k(eq.last)}  (${eq.last >= eq.first ? '+' : ''}${((eq.last / eq.first - 1) * 100).toFixed(1)}% 24h)` : 'collecting data...' });
+  // mascot and what it says: the bot's last move within 2 min, else a death or revive, else its mood
+  const mood = moodOf(eqPts, now), poses = mascot(mood), o = orders.at(-1), dx = recentDeaths.at(-1), px = pumps.at(-1);
+  for (const [m, p] of [['happy', 'mg'], ['cool', 'mc'], ['sad', 'mr']]) ['a', 'b', 'c', 'd'].forEach((x, j) => { out[p + x] = m === mood ? poses[j] : ' '; });
+  const recent = (t) => t && now - t < 2 * 60e3;
+  out.say = bubble(recent(o?.t) ? (o.side === 'buy' ? `BOUGHT ${o.name}! ${(o.cash / 100).toFixed(2)} Cx` : `SOLD ${o.name} ${o.pnl == null ? '' : `${o.pnl >= 0 ? '+' : ''}${(o.pnl / 100).toFixed(2)} Cx`}${o.pnl > 0 ? ' yeehaw' : ''}`)
+    : recent(dx?.t) ? (dx.revive ? `${dx.u} IS BACK from the dead!` : `RIP ${dx.u}... selling fast`) : recent(px?.t) ? `nice try pumpers, ${px.name} ignored` : SAY[mood][Math.floor(now / 60e3) % 2]);
+  const lg = layers(botLog(orders.slice(-12), recentDeaths, pumps), 50);
+  Object.assign(out, { lw: lg.w, lg: lg.g, lr: lg.r, ly: lg.y });
+  const batch = Object.entries(out).filter(([key, v]) => sent[key] !== v);
+  if (!pipe || !batch.length) return;
+  pipe.stdin.write(batch.map(([key, v]) => `@@${key}\n${v}\n`.replace(/\n\n$/, '\n')).join('') + '@@end\n');
+  for (const [key, v] of batch) sent[key] = v;
 }
 
 // Entries, every 15 s, one order per scan. Top basket: hold the topN highest-priced live stocks, sell at rank topExit
 // every topReb. Then (at most MAX_POS other positions): survivors 20 s after a fresh death, else the deepest crash.
-const lastScan = {};
+const lastScan = {}, pumpSeen = {};
 let lastReb = 0;
-// one ASCII art per stream page (stream/art1-5.txt), drawn under the mascot
-const ARTS = [1, 2, 3, 4, 5].map((n) => { try { return fs.readFileSync(`stream/art${n}.txt`, 'utf8'); } catch { return ' \n'; } });
 async function scan() {
   const now = Date.now(), stocks = [], spark = {};
   for (let page = 1; page <= 3; page++) {
@@ -302,7 +330,14 @@ async function scan() {
     }
     // entry by calm price (the lowest of now, topCalm/2 and topCalm ago; no sparkline point = no trade = calm): a 30 s pump never ranks
     const calm = (x) => P.topCalm ? calmPrice(x.last_price_cents, priceSince(x.external_id, now - P.topCalm / 2) ?? x.last_price_cents, priceSince(x.external_id, now - P.topCalm) ?? x.last_price_cents) : x.last_price_cents;
-    const mine = new Set(me.holdings.map((h) => h.external_id)), s = ranked.toSorted((a, b) => calm(b) - calm(a)).slice(0, P.topN).find((x) => !mine.has(x.external_id));
+    const mine = new Set(me.holdings.map((h) => h.external_id)), byCalm = ranked.toSorted((a, b) => calm(b) - calm(a)), s = byCalm.slice(0, P.topN).find((x) => !mine.has(x.external_id));
+    // for the stream: the basket ranking, and each pump the filter kept out (in the top N by price, 1.5x its calm price)
+    basket = byCalm.slice(0, 18).map((x) => { const p5 = priceSince(x.external_id, now - BREADTH_WINDOW); return { name: x.name, price: x.last_price_cents, calm: calm(x), ch5: p5 ? x.last_price_cents / p5 - 1 : null, held: mine.has(x.external_id) }; });
+    for (const x of ranked.slice(0, P.topN)) {
+      if (x.last_price_cents < 1.5 * calm(x) || pumpSeen[x.external_id] > now - 10 * 60e3) continue;
+      pumpSeen[x.external_id] = now; pumps.push({ t: now, name: x.name, ratio: x.last_price_cents / calm(x) }); if (pumps.length > 20) pumps.shift();
+      log({ ev: 'pump_skip', name: x.name, ratio: +(x.last_price_cents / calm(x)).toFixed(2) });
+    }
     if (s && trialOn('top')) {
       const c = await cash(), amt = Math.min(Math.floor(c * P.topSize), sizeCap(s.last_price_cents));
       const t = amt >= MIN_BUY && amt <= c && await buy(s, amt, `top #${rank.get(s.external_id) + 1} @${s.last_price_cents}`, 'top');

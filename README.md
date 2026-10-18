@@ -90,13 +90,21 @@ after `END_AT`.
 
 ### Live stream (no browser)
 
-The engine pushes a text dashboard every 2 s over one long-lived ssh connection, rotating its pages every 20 s (4, plus one STATUS page per 34 alive contestants), plus a ticker line. ffmpeg frames
-them with an ASCII "CX" banner, a blinking LIVE tag, a dancing ASCII mascot (`stream/dance1-4.txt`, 4 poses a second),
-one floating ASCII art per page under it (`stream/art1-5.txt`: money bag, candles, bull, skull, shield, in turn past
-page 5) and the
-scrolling ticker; `stream/run.sh` on a server has ffmpeg draw it
-(`drawtext`), encode it and send it to the RTMP(S) ingest, restarting after any drop. Measured on a 1 GB VPS: 7% of a
-core and 94 MB at 1280x720, 5 fps.
+The engine pushes the stream's texts every 2 s over one long-lived ssh connection (only the ones that changed), and
+`stream/run.sh` on a server has ffmpeg draw them (`drawtext`), encode them and send them to the RTMP(S) ingest,
+restarting after any drop. Measured on a 1 GB VPS: 8% of a core and 119 MB at 1280x720, 8 fps. The frame:
+
+- **Header**: ASCII "CX" banner, a blinking LIVE tag, total profit (realized + open) big, green or red.
+- **8 tiles**: total value, change since the start (607.46 Cx), cash, invested, positions, round trips won, contestants
+  alive, time left in the event.
+- **Left**: the current page, a new one every 20 s (5, plus one STATUS page per 34 alive contestants). The header line
+  fills a bar until the next page, the line under it says what the page shows.
+- **Right**: the total value over 24 h as a block chart (green when up over the window, red when down), with low, high
+  and now; the CX mascot in a cowboy hat (Houston), dancing on a disco floor, 4 poses a second, happy and green when
+  the value is up 0.5% over 15 min, sad and red when down 0.5%, cool and cyan otherwise, with a speech bubble that
+  announces its last buy or sell (net PnL), a death or a revive within 2 min; the bot log (its orders, deaths,
+  revives and refused pumps, newest first).
+- **Bottom**: a scrolling ticker (PnL, 5-min movers, last orders, alive count).
 
 1. Server (ffmpeg + DejaVu fonts): copy `stream/run.sh` to `~/szdash/`, put the ingest URL and stream key in
    `~/szdash/url` (`chmod 600`), run `nohup sh ~/szdash/run.sh >/dev/null 2>&1 &` and add it as a crontab `@reboot`.
@@ -104,14 +112,14 @@ core and 94 MB at 1280x720, 5 fps.
 
 | Page | Shows |
 |---|---|
-| 1 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and % |
-| 2 ACTIVITY | last 14 orders (buy / sell), and per strategy: closed round trips, winners, PnL |
+| 1 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and %, the contestant's HP, how long it has been held |
+| 2 ACTIVITY | last 14 orders (buy / sell); per strategy: closed round trips, winners, PnL; the 4 best and 4 worst round trips |
 | 3 MARKET | 8 biggest 5-min rises and falls, share of the market rising, the 18 most expensive stocks |
-| 4 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths (with what killed them) and revives, newest first |
-| 5 and on, STATUS | every alive contestant, weakest first, 34 per page (67 alive on 18/10 at 13:40 UTC: STATUS 1/2 and 2/2): HP bar, HP, sigil, and the S P D O L R flags below |
+| 4 TOP BASKET TRACKER | the basket's ranking on calm price (calm, now, 5-min change, HELD or NEXT to buy) and the pumps it refused (price over 1.5x its calm price, `pump_skip` in the log) |
+| 5 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths (with what killed them) and revives, newest first |
+| 6 and on, STATUS | every alive contestant, weakest first, 34 per page: HP bar, HP, sigil, and the S P D O L R flags below |
 
-Pages are numbered over their current count (`6/6` with two STATUS pages). The six pages on 18/10 at 21:09 UTC, 50
-alive, one of them revived (page 4 lists the revive in green, STATUS 1/2 shows its R flag):
+The seven pages on 18/10 around 21:40 UTC (48 alive, two STATUS pages):
 
 ![Stream page 1, portfolio](docs/screenshots/stream-page-1.png)
 
@@ -119,19 +127,21 @@ alive, one of them revived (page 4 lists the revive in green, STATUS 1/2 shows i
 
 ![Stream page 3, market](docs/screenshots/stream-page-3.png)
 
-![Stream page 4, contestants](docs/screenshots/stream-page-4.png)
+![Stream page 4, top basket tracker](docs/screenshots/stream-page-4.png)
 
-![Stream page 5, status 1/2](docs/screenshots/stream-page-5.png)
+![Stream page 5, contestants](docs/screenshots/stream-page-5.png)
 
-![Stream page 6, status 2/2](docs/screenshots/stream-page-6.png)
+![Stream page 6, status 1/2](docs/screenshots/stream-page-6.png)
+
+![Stream page 7, status 2/2](docs/screenshots/stream-page-7.png)
 
 `ssh <host> sh -s < stream/snap.sh && scp '<host>:/tmp/szsnap/*.png' docs/screenshots/` retakes them: on the server,
 it waits for each page, freezes its text files and has ffmpeg draw one frame with `run.sh`'s own filters, so a
 screenshot is exactly what viewers see. The live stream is not touched. Rename `page<N>.png` to `stream-page-<N>.png`.
 
-Colors (one drawtext layer each, aligned on the same character grid): **green** gain, buy, HP over 70%, live;
-**red** loss, sell, HP under 35%, death, poison, drone, outside the zone; **yellow** HP 35 to 70%, shield; **cyan**
-titles; **white** everything else.
+Colors (one drawtext layer each, aligned on the same character grid): **green** gain, buy, HP over 70%, live, revive;
+**red** loss, sell, HP under 35%, death, poison, drone, outside the zone; **yellow** HP 35 to 70%, shield, page
+description, refused pump; **cyan** titles; **white** everything else.
 
 Contestant status, decoded from the map's health frame and roster (never their positions):
 
@@ -318,11 +328,11 @@ hides stock ids and the site host, and stops if any of them is still on the page
 
 `node status.mjs` prints deaths, breadth, trades and PnL per strategy from local files. `trades.jsonl` is the event
 log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick_say`, `auth_lost` (log in again),
-`blocked`, `revive`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
+`blocked`, `revive`, `pump_skip`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, chat and stream text (every alive contestant on a STATUS page), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules
