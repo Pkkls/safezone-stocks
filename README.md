@@ -37,6 +37,9 @@ Everything below was measured on the live public API, not taken from documentati
     session cookie).
   - `event-public.<host>/event/map-snapshot` gives the live map: safe zones, graves and contestant health.
 - **Rate limit**: bursts of about 6 requests/s get the IP blocked (`403 {"error":"Blocked"}`) for several minutes.
+  Orders have their own per-account throttle: a third order within about 2 s gets
+  `429 {"error":"RATELIMITED","message":"Too many trades, try again in 4s."}`. That one is not a block, the order
+  just has to wait.
 
 ## What the engine does
 
@@ -49,7 +52,7 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
 | `crash` | a stock drops 25% or more between two scans (15 s) with no pump in the 3 min before; 5 min cooldown after any exit on that stock (30 min for the other strategies) | after 10 min |
 | `surv` | 20 s after a new death, buy the 2 highest-priced live contestants | after 30 min |
 | `mom` | momentum, only while at least 60% of the market is rising together | 20% trail or 10 min |
-| `top` | every hour, hold the 10 highest-priced live contestants (traded in the last 30 min), 15% of cash each, capped at 1.5% of the pool reserve | when the rank reaches 20, or death |
+| `top` | hold the 10 highest-priced live contestants (traded in the last 30 min): a missing one is bought at once, one order per scan, 15% of cash each, capped at 1.5% of the pool reserve | rank 20 or worse at the hourly check, or death |
 
 `top` is the only steady earner measured so far: on the 18/10 evening tape (21:00 to 03:00 UTC, deaths sold at the
 knocked-down price) it made +404 Cx from 866, positive in both halves, in 14 buys. Frequent entries (dips of 10 to
@@ -216,10 +219,10 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 | `auth_lost` | the site session expired: log in again |
 | `blocked` | rate limited, the engine pauses itself |
 | `restart`, `watchdog` | the supervisor restarted a dead engine (exit code, wait); the engine found itself stuck |
-| `crash_off`, `surv_off` | a strategy switched itself off |
-| `crash_on`, `surv_on` | the re-tuning switched it back on |
+| `crash_off`, `surv_off`, `top_off` | a strategy switched itself off |
+| `crash_on`, `surv_on`, `top_on` | the re-tuning switched it back on |
 | `hp_feed` | the map's health feed appeared or went silent (frame headers, for diagnosis) |
-| `tune` | parameter re-tuning result |
+| `tune`, `tune_crash`, `tune_surv`, `tune_top` | parameter re-tuning result per strategy |
 
 - Telegram, if configured: lost session, long API block, strategy switched off, new parameters, daily PnL.
 
@@ -234,7 +237,8 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
   - the chat message format;
   - the health decoder;
   - the cookie sorter;
-  - the kill-switch tally (counted from the last re-arm) and the watchdog's stuck rule.
+  - the kill-switch tally (counted from the last re-arm) and the watchdog's stuck rule;
+  - the top basket replay: a rising leader wins, a falling one loses, a death knock is sold and never rebought.
 
   Each check has a control case that must fail.
 
