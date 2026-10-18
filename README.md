@@ -219,7 +219,7 @@ up while the engine restarts and cannot stop trading if it fails. It is read-onl
 built from local files only, and pushes every change within 2 s (server-sent events). It works at phone width too.
 
 The screenshots below are the live dashboard on 18/10 around 04:00 UTC, the first evening of the event. The whole
-page in one image: [overview.png](docs/screenshots/overview.png).
+page in one image is at the end of this section.
 
 ![Header: engine status, data age, time left in the event](docs/screenshots/header.png)
 
@@ -233,14 +233,17 @@ condition.
 
 ![Portfolio](docs/screenshots/portfolio.png)
 
-<details>
-<summary>Close-ups: key figures, value curve with its tooltip, positions</summary>
+*Key figures*
 
 ![Key figures](docs/screenshots/kpis.png)
-![Total value curve, hover tooltip](docs/screenshots/equity-tooltip.png)
-![Positions](docs/screenshots/positions.png)
 
-</details>
+*Total value curve, hover tooltip*
+
+![Total value curve, hover tooltip](docs/screenshots/equity-tooltip.png)
+
+*Positions*
+
+![Positions](docs/screenshots/positions.png)
 
 ### Strategies
 
@@ -250,18 +253,33 @@ the order log (filter: buys, sells, rejected) and the closed round trips.
 
 ![Strategies](docs/screenshots/strategies.png)
 
-<details>
-<summary>Close-ups: strategy PnL and kill switches, top basket, crash radar, tuning, order log, round trips</summary>
+*PnL by strategy, kill switches, market breadth*
 
 ![PnL by strategy, kill switches, market breadth](docs/screenshots/strategy-pnl.png)
-![Top basket ranking](docs/screenshots/top-basket.png)
-![Crash radar](docs/screenshots/crash-radar.png)
-![Auto-tuning, parameters, round trip distribution](docs/screenshots/tuning-params.png)
-![Order log](docs/screenshots/orders.png)
-![Order log, rejected orders only](docs/screenshots/orders-rejected.png)
-![Round trips](docs/screenshots/round-trips.png)
 
-</details>
+*Top basket ranking*
+
+![Top basket ranking](docs/screenshots/top-basket.png)
+
+*Crash radar*
+
+![Crash radar](docs/screenshots/crash-radar.png)
+
+*Auto-tuning, parameters, round trip distribution*
+
+![Auto-tuning, parameters, round trip distribution](docs/screenshots/tuning-params.png)
+
+*Order log*
+
+![Order log](docs/screenshots/orders.png)
+
+*Order log, rejected orders only*
+
+![Order log, rejected orders only](docs/screenshots/orders-rejected.png)
+
+*Round trips*
+
+![Round trips](docs/screenshots/round-trips.png)
 
 ### Market
 
@@ -270,16 +288,25 @@ trades of the hour, a heat map of every live stock and the trade feed.
 
 ![Market](docs/screenshots/market.png)
 
-<details>
-<summary>Close-ups: breadth, volume with its tooltip, movers and whales, heat map with its tooltip, trade feed</summary>
+*Breadth over time, live activity*
 
 ![Breadth over time, live activity](docs/screenshots/breadth.png)
-![Volume per 10 minutes, hover tooltip](docs/screenshots/volume-tooltip.png)
-![Top gainers, top losers, whales](docs/screenshots/movers-whales.png)
-![Market heat map, hover tooltip](docs/screenshots/heat-map-tooltip.png)
-![Trade feed](docs/screenshots/trade-feed.png)
 
-</details>
+*Volume per 10 minutes, hover tooltip*
+
+![Volume per 10 minutes, hover tooltip](docs/screenshots/volume-tooltip.png)
+
+*Top gainers, top losers, whales*
+
+![Top gainers, top losers, whales](docs/screenshots/movers-whales.png)
+
+*Market heat map, hover tooltip*
+
+![Market heat map, hover tooltip](docs/screenshots/heat-map-tooltip.png)
+
+*Trade feed*
+
+![Trade feed](docs/screenshots/trade-feed.png)
 
 ### Game
 
@@ -288,14 +315,17 @@ settled stocks.
 
 ![Game](docs/screenshots/game.png)
 
-<details>
-<summary>Close-ups: deaths, health, settlements</summary>
+*Contestants, deaths per hour, causes*
 
 ![Contestants, deaths per hour, causes](docs/screenshots/deaths.png)
-![Latest deaths, lowest HP, outside the zone](docs/screenshots/health.png)
-![Settlements](docs/screenshots/settlements.png)
 
-</details>
+*Latest deaths, lowest HP, outside the zone*
+
+![Latest deaths, lowest HP, outside the zone](docs/screenshots/health.png)
+
+*Settlements*
+
+![Settlements](docs/screenshots/settlements.png)
 
 ### Engine
 
@@ -304,13 +334,13 @@ Kick announcements, data file sizes and the event log (filter: orders, tuning, h
 
 ![Engine](docs/screenshots/engine.png)
 
-<details>
-<summary>Close-ups: engine health, event log filtered on health events</summary>
+*Engine health, API, health feed, event end*
 
 ![Engine health, API, health feed, event end](docs/screenshots/engine-health.png)
-![Event log, health events only](docs/screenshots/events-health.png)
 
-</details>
+*Event log, health events only*
+
+![Event log, health events only](docs/screenshots/events-health.png)
 
 ### On a phone
 
@@ -323,6 +353,10 @@ Kick announcements, data file sizes and the event log (filter: orders, tuning, h
 <td><img src="docs/screenshots/mobile-engine.png" width="190" alt="Engine health and API"></td>
 </tr>
 </table>
+
+### Whole page
+
+![The whole dashboard in one image](docs/screenshots/overview.png)
 
 ### Notes
 
