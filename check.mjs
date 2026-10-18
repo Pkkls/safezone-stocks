@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, deadAfter, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -148,6 +148,20 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.match(P[2], /1\. Top +90\.00/);
   assert.match(P[3], /IN DANGER[^\n]*\nx +20\/100[^\n]*newest +knife/, 'low hp listed (z at 90 hp is not), deaths newest first with their source');
   assert.doesNotMatch(P[3], /\nz /, 'control: a healthy contestant is not in danger');
+  // revives (18/10): a revived contestant is alive again, and buyable; a death after the revive counts again
+  {
+    assert.ok(deadAfter(100) && !deadAfter(100, 200) && deadAfter(300, 200) && !deadAfter(undefined, 200), 'dead until revived, dead again after a new death');
+    assert.ok(!deadAfter(100, 0, 150) && deadAfter(300, 200, 150), 'since: only a death after it');
+    const old = (died = 0, revived = 0, since = 0) => died > since;
+    assert.ok(old(100, 200) && !deadAfter(100, 200), 'control: the old rule (died > since) kept a revived contestant dead');
+    const rv = streamPages({ me, health: { back: { alive: true, hp: 45, max: 100, out: false } }, revived: { back: 2e12 },
+      deaths: [{ u: 'back', t: 1e12, cause: 'damage', source: 'zone' }, { u: 'back', t: 2e12, revive: true }] });
+    const rp = rv.map((p) => p.replace(/\x01.|\x02/g, '')), rl = rv.map(layers);
+    assert.match(rp[3], /DEATHS AND REVIVES[^\n]*\n[^\n]*back +REVIVED[^\n]*\n[^\n]*back +zone/, 'a revive is listed with the deaths, newest first');
+    assert.match(rl[3].g, /REVIVED/, 'a revive is drawn in green');
+    assert.match(rp[4], /\nback +[#-]{10} +45 - +\.\.\.\.\.R/, 'status: R flag on a revived contestant');
+    assert.doesNotMatch(plain[4], /^[xz] .*R$/m, 'control: no R flag without a revive');
+  }
   const tick = streamTicker({ me, names: { b: 'Big' }, health: { x: { alive: true }, y: { alive: false } }, movers: [{ name: 'Up', ret: 0.2 }, { name: 'Down', ret: -0.1 }] });
   assert.match(tick, /^CX STOCK BOT +\| +REALIZED \+505\.80 Cx +\| +RISING {2}Up \+20\.0% +\| +FALLING {2}Down -10\.0% +\| +LAST ORDERS {2}04:29 buy Big 20\.00 Cx +\| +ALIVE 1 /);
   assert.ok(!tick.includes('\n') && /^[\x20-\x7e]+$/.test(tick), 'one printable ASCII line');

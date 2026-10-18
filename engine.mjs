@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, streamPages, streamTicker, layers, roundTrips } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -95,6 +95,10 @@ function api(path, body) {
 // later. Known deaths are reloaded from data/deaths.jsonl: an in-game blackout hides graves and health.
 const diedAt = {}, health = {}, roster = {}, recentDeaths = []; // roster (sigil, live) and recentDeaths (newest last): for the stream
 if (fs.existsSync('data/deaths.jsonl')) for (const l of fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); if (d.t > (diedAt[d.u] || 0)) recentDeaths.push(d); diedAt[d.u] = Math.max(diedAt[d.u] || 0, d.t); }
+// revives (18/10, new in the game): an eliminated contestant can come back, and its stock with it. The roster clears
+// eliminated_at; that time is kept in revivedAt (data/revives.jsonl), and a death only counts while no revive follows it.
+const revivedAt = {};
+if (fs.existsSync('data/revives.jsonl')) for (const l of fs.readFileSync('data/revives.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); recentDeaths.push(d); revivedAt[d.u] = Math.max(revivedAt[d.u] || 0, d.t); }
 recentDeaths.sort((a, b) => a.t - b.t).splice(0, recentDeaths.length - 20);
 let pendingDeath = 0, mapLoaded = false;
 async function readMap() {
@@ -107,7 +111,13 @@ async function readMap() {
     const o = JSON.parse(f.text);
     for (const c of o.type === 'contestants' ? o.data.roster?.contestants || [] : []) {
       const n = String(c.name).toLowerCase();
-      if (c.eliminated_at && !diedAt[n]) diedAt[n] = Date.parse(c.eliminated_at);
+      if (c.eliminated_at) { if (!deadAfter(diedAt[n], revivedAt[n])) diedAt[n] = Date.parse(c.eliminated_at); }
+      else if (deadAfter(diedAt[n], revivedAt[n]) && Date.now() - diedAt[n] > 30e3) { // 30 s: a grave can show before the roster
+        const d = { u: n, t: Date.now(), revive: true, died: diedAt[n] };
+        fs.appendFileSync('data/revives.jsonl', JSON.stringify(d) + '\n'); log({ ev: 'revive', name: n, died_at: diedAt[n] });
+        recentDeaths.push(d); if (recentDeaths.length > 20) recentDeaths.shift();
+        revivedAt[n] = d.t;
+      }
       roster[n] = { sigil: c.sigil, live: !!c.live }; // for the stream's status page
     }
     for (const it of o.type === 'game_items' ? o.data.items : []) {
@@ -125,7 +135,7 @@ async function readMap() {
 const hpOf = (name) => health[name.toLowerCase()];
 // never buy dead, outside the zone or under HP_MIN; a holding is sold under HP_EXIT (leaving the zone alone is not enough)
 const risky = (name, frac = HP_MIN) => { const h = hpOf(name); return !!h && (!h.alive || (frac === HP_MIN && h.out) || h.hp < h.max * frac); };
-const dead = (name, since = 0) => (diedAt[name.toLowerCase()] || 0) > since;
+const dead = (name, since = 0) => deadAfter(diedAt[name.toLowerCase()], revivedAt[name.toLowerCase()], since);
 async function dumped(h, since) { // a sell knocking the price down >= DUMP_DROP since `since`
   const r = await api(`stock-market/stocks/${h.external_id}/trades?page=1&pageSize=20`);
   return (r.j?.data || []).some((t) => t.side === 'sell' && Date.parse(t.occurred_at) > since && (t.price_before_cents - t.price_after_cents) / t.price_before_cents >= DUMP_DROP);
@@ -222,7 +232,7 @@ function writeLive() {
   const entry = {};
   for (const h of me?.holdings || []) if (state.entryAt[h.external_id]) entry[h.external_id] = entryPx(h);
   fs.writeFileSync('live.json.tmp', JSON.stringify({ t: Date.now(), pid: process.pid, startedAt: STARTED, dry: DRY, end: END, P, me, state, entry, market: lastMarket,
-    health, roster, hpFeed: Object.keys(health).length > 0, trialOff, api: { blockedUntil, backoff, lastOk, authLostAt }, lastReb, diedAt }));
+    health, roster, hpFeed: Object.keys(health).length > 0, trialOff, api: { blockedUntil, backoff, lastOk, authLostAt }, lastReb, diedAt, revivedAt }));
   fs.renameSync('live.json.tmp', 'live.json');
   if (me && Date.now() - lastEquity >= 60e3) {
     lastEquity = Date.now();
@@ -243,7 +253,7 @@ function pushStream() {
     const drop = (e) => { if (e) log({ ev: 'stream_err', msg: String(e.message || e) }); pipe = null; };
     pipe.on('error', drop); pipe.on('exit', () => drop()); pipe.stdin.on('error', drop);
   }
-  const d = { me, names, health, roster, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
+  const d = { me, names, health, roster, revived: revivedAt, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
     strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
   const i = Math.floor(Date.now() / 20e3) % pages.length, L = layers(pages[i]);
   // profit overlay: total PnL (realized + open) big in the header, green when positive (pg) or red (pr), detail in ps

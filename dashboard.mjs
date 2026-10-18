@@ -112,7 +112,7 @@ function build() {
   readLog(); readTape();
   const now = Date.now(), live = readJson('live.json') || {}, me = live.me || null, st = live.state || {}, P = live.P || {};
   const market = live.market?.stocks || [], names = Object.fromEntries(market.map((s) => [s.id, s.name]));
-  const deaths = dedupeDeaths(), equity = lines('data/equity.jsonl'), settled = lines('data/settled.jsonl');
+  const deaths = dedupeDeaths(), revives = lines('data/revives.jsonl'), equity = lines('data/equity.jsonl'), settled = lines('data/settled.jsonl');
   const trips = roundTrips().filter((x) => x.pnl !== null);
 
   // positions
@@ -142,7 +142,7 @@ function build() {
 
   // market views
   const ch = (s, ms) => { const p0 = priceAt(s.id, now - ms); return p0 ? s.p / p0 - 1 : null; };
-  const stocks = market.map((s) => ({ ...s, dead: s.el || !!live.diedAt?.[String(s.name).toLowerCase()], ch15: ch(s, 15 * 60e3), ch60: ch(s, HOUR), drop: s.prev ? s.p / s.prev - 1 : null, ch5: s.p5 ? s.p / s.p5 - 1 : null }));
+  const stocks = market.map((s) => ({ ...s, dead: s.el || (live.diedAt?.[String(s.name).toLowerCase()] || 0) > (live.revivedAt?.[String(s.name).toLowerCase()] || 0), ch15: ch(s, 15 * 60e3), ch60: ch(s, HOUR), drop: s.prev ? s.p / s.prev - 1 : null, ch5: s.p5 ? s.p / s.p5 - 1 : null }));
   const held = new Set(holdings.map((h) => h.external_id));
   const ranked = stocks.filter((s) => s.st === 'active' && !s.dead && s.lt && now - s.lt < 30 * 60e3).sort((a, b) => b.p - a.p)
     .map((s, i) => ({ rank: i + 1, id: s.id, name: s.name, p: s.p, ch60: s.ch60, held: held.has(s.id), kind: st.kind?.[s.id] || null, spark: spark(s.id, now) }));
@@ -157,7 +157,7 @@ function build() {
   for (const d of deaths) causes[d.source || d.cause || '?'] = (causes[d.source || d.cause || '?'] || 0) + 1;
   const health = Object.entries(live.health || {}).map(([u, h]) => ({ u, ...h })), roster = live.roster || {};
   // every alive contestant, weakest first (18/10: a list cut to the weakest hid a healthy one, FloridaBoy 110/110)
-  const aliveAll = health.filter((h) => h.alive).sort((a, b) => a.hp / a.max - b.hp / b.max || a.u.localeCompare(b.u)).map((h) => ({ ...h, sigil: roster[h.u]?.sigil ?? null, live: !!roster[h.u]?.live }));
+  const aliveAll = health.filter((h) => h.alive).sort((a, b) => a.hp / a.max - b.hp / b.max || a.u.localeCompare(b.u)).map((h) => ({ ...h, sigil: roster[h.u]?.sigil ?? null, live: !!roster[h.u]?.live, revived: !!live.revivedAt?.[h.u] }));
 
   // engine
   const age = (t) => (t ? now - t : null);
@@ -183,7 +183,7 @@ function build() {
       feed: feed.slice(-40).reverse().map((r) => ({ t: r.t, name: names[r.e] || r.e.slice(-6), side: r.s, c: r.c, imp: r.pb ? r.pa / r.pb - 1 : 0 })),
       whales: [...hourTrades].sort((a, b) => (b.c || 0) - (a.c || 0)).slice(0, 10).map((r) => ({ t: r.t, name: names[r.e] || r.e.slice(-6), side: r.s, c: r.c, imp: r.pb ? r.pa / r.pb - 1 : 0 })),
       counts: { listed: market.length, active: stocks.filter((s) => s.st === 'active' && !s.dead).length, dead: stocks.filter((s) => s.dead).length, settled: settled.length } },
-    game: { deaths: deaths.length, lastDeaths: deaths.slice(-25).reverse(), perHour: Object.entries(perHour).map(([t, n]) => [+t, n]).sort((a, b) => a[0] - b[0]).slice(-36), causes,
+    game: { deaths: deaths.length, lastDeaths: [...deaths, ...revives].sort((a, b) => a.t - b.t).slice(-25).reverse(), revives: revives.length, perHour: Object.entries(perHour).map(([t, n]) => [+t, n]).sort((a, b) => a[0] - b[0]).slice(-36), causes,
       alive: health.filter((h) => h.alive).length, tracked: health.length, aliveAll, outside: health.filter((h) => h.alive && h.out).sort((a, b) => a.hp - b.hp),
       lowHp: health.filter((h) => h.alive && h.max).sort((a, b) => a.hp / a.max - b.hp / b.max).slice(0, 15), settled: settled.slice(-20).reverse() },
     events: events.slice(-300).reverse(),

@@ -11,6 +11,8 @@ protects positions you open by hand, tunes itself, announces its trades in Kick 
 - One stock per contestant, opening at 10.00 Cx, in a constant-product pool with ~10,000 Cx of cash reserve `R`: a
   buy of `c` moves the price by ~`2c/R`, so your own orders move the price against you. Fees: 1.5% per side.
 - A death knocks the stock ~20% down, 30 s to 2 min later. Eliminated stocks settle ~4 h later and vanish from the API.
+- Since 18/10 a dead contestant can be revived: the roster clears `eliminated_at`, the stock loses its elimination
+  flag and trades again. A revived contestant can die again (one died at 20:39, 20:41, and was back at 21:05 UTC).
 - Data: `api.<host>/public/stock-market/` (stocks, trades, sparklines, your portfolio with the session cookie) and
   `event-public.<host>/event/map-snapshot` (graves, roster, contestant health).
 - ~6 requests/s gets the IP blocked (`403 Blocked`); a 3rd order within ~2 s gets `429 RATELIMITED` (just retry).
@@ -27,7 +29,9 @@ Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one orde
 
 - **Run mode**: a crash or survivor buy that gains 10% rides a 15% trail from its peak, up to 2 h, instead of its timer.
 - **Every position**, including yours: sold at death (grave, health feed or roster), under 25% HP, at elimination or
-  when the stock stops trading. Never bought under 40% HP, outside the zone or dead.
+  when the stock stops trading. Never bought under 40% HP, outside the zone or dead. A death counts until the
+  roster shows the contestant alive again (at least 30 s after it): then it is buyable, and a new death counts again.
+  Revives go to `data/revives.jsonl` and the `revive` event.
 - **Your own positions**: 15% trail from the peak and a dump exit (a single sell of -5% or more), never a timer. When
   you hold the same stock as the engine, it only sells its own shares.
 - **Guard rails**: rebound and survivor orders capped at 1.5% of the pool reserve; at most 6 non-basket positions; a
@@ -97,10 +101,11 @@ core and 94 MB at 1280x720, 5 fps.
 | 1 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and % |
 | 2 ACTIVITY | last 14 orders (buy / sell), and per strategy: closed round trips, winners, PnL |
 | 3 MARKET | 8 biggest 5-min rises and falls, share of the market rising, the 18 most expensive stocks |
-| 4 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths with what killed them |
-| 5 and on, STATUS | every alive contestant, weakest first, 34 per page (67 alive on 18/10 at 13:40 UTC: STATUS 1/2 and 2/2): HP bar, HP, sigil, and the S P D O L flags below |
+| 4 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths (with what killed them) and revives, newest first |
+| 5 and on, STATUS | every alive contestant, weakest first, 34 per page (67 alive on 18/10 at 13:40 UTC: STATUS 1/2 and 2/2): HP bar, HP, sigil, and the S P D O L R flags below |
 
-Pages are numbered over their current count (`6/6` with two STATUS pages). The six pages on 18/10 at 13:48 UTC:
+Pages are numbered over their current count (`6/6` with two STATUS pages). The six pages on 18/10 at 21:09 UTC, 50
+alive, one of them revived (page 4 lists the revive in green, STATUS 1/2 shows its R flag):
 
 ![Stream page 1, portfolio](docs/screenshots/stream-page-1.png)
 
@@ -133,6 +138,7 @@ Contestant status, decoded from the map's health frame and roster (never their p
 | D drone | a drone strike is incoming |
 | O outside | outside the safe zone: loses HP until back in |
 | L live | streaming on Kick right now |
+| R revived | died, then came back (revives exist since 18/10) |
 | deaths | what killed them: zone, knife, drone, zombie_leech... |
 
 A frozen "data HH:MM:SS UTC" on the stream means the PC stopped pushing. `stream/check.sh <env file with TG_TOKEN and
@@ -147,7 +153,7 @@ read-only and local (bound to 127.0.0.1), built from local files only: `live.jso
 (portfolio, last scan, contestant health and roster, API state), `trades.jsonl`, the tape and `data/equity.jsonl` (one
 total value point a minute). Every change reaches open tabs within 2 s (server-sent events). It works at phone width.
 
-The screenshots below are the live dashboard on 18/10 around 14:00 UTC (16 positions, total value 1,669 Cx from 607).
+The screenshots below are the live dashboard on 18/10 around 21:10 UTC (15 positions, total value 2,043 Cx from 607).
 The value curve has a hole from 04:30 to 13:50 UTC: the dashboard was removed then, and no point was recorded.
 
 ![Header: engine status, data age, time left in the event](docs/screenshots/header.png)
@@ -240,7 +246,8 @@ trades of the hour, a heat map of every live stock and the trade feed.
 ### Game
 
 Contestants alive, deaths per hour and by cause, every alive contestant (weakest first, with class, shield and live
-on Kick), the latest deaths, the lowest HP, who is outside the zone, and settled stocks.
+on Kick, revived ones flagged), the latest deaths and revives, the lowest HP, who is outside the zone, and settled
+stocks.
 
 ![Game](docs/screenshots/game.png)
 
@@ -252,9 +259,9 @@ on Kick), the latest deaths, the lowest HP, who is outside the zone, and settled
 
 ![Every alive contestant, weakest first](docs/screenshots/alive-contestants.png)
 
-*Latest deaths, lowest HP, outside the zone*
+*Latest deaths and revives, lowest HP, outside the zone*
 
-![Latest deaths, lowest HP, outside the zone](docs/screenshots/health.png)
+![Latest deaths and revives, lowest HP, outside the zone](docs/screenshots/health.png)
 
 *Settlements*
 
@@ -305,11 +312,11 @@ hides stock ids and the site host, and stops if any of them is still on the page
 
 `node status.mjs` prints deaths, breadth, trades and PnL per strategy from local files. `trades.jsonl` is the event
 log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick_say`, `auth_lost` (log in again),
-`blocked`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
+`blocked`, `revive`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, chat and stream text (every alive contestant on a STATUS page), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), chat and stream text (every alive contestant on a STATUS page), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules
