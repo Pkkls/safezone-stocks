@@ -19,6 +19,8 @@ if (Date.now() > END && !LOGIN) process.exit(0);
 // (crash, watchdog exit), 10 s after a long run, backing off to 10 min on a crash loop. The child exits when its IPC
 // channel closes (Stop-ScheduledTask kills the supervisor), so no orphan keeps trading or holds the profile.
 if (!LOGIN && !process.env.SZ_CHILD) {
+  // the dashboard lives here, not in the engine: it survives engine restarts and cannot take trading down
+  import('./dashboard.mjs').then((m) => m.serve()).catch((e) => fs.appendFileSync('trades.jsonl', JSON.stringify({ t: new Date().toISOString(), ev: 'dashboard_err', msg: e.message }) + '\n'));
   let wait = 5e3;
   for (;;) {
     const t0 = Date.now();
@@ -247,6 +249,7 @@ async function trade(side, h, payload, why) {
   if (DRY) return log({ ev: 'dry', side, name: h.name, why, body });
   const r = await api(side, body);
   log({ ev: side, name: h.name, why, status: r.s, res: r.j });
+  if (r.j?.balance_after_cents != null) lastCash = r.j.balance_after_cents;
   if (r.s === 200 && r.j?.shares) {
     const id = h.external_id;
     if (side.endsWith('buy')) state.shares[id] = String(BigInt(state.shares[id] || 0) + BigInt(r.j.shares));
@@ -320,6 +323,26 @@ async function guard() {
     if (why) await sellOwn(h, why);
   }
   save();
+  writeLive();
+}
+
+// Dashboard feed (dashboard.mjs reads it): what only this process knows, rewritten every guard tick (5 s), plus one
+// equity point a minute in data/equity.jsonl. Write-then-rename: the dashboard never reads half a file.
+const STARTED = Date.now();
+let lastMarket = null, lastEquity = 0;
+// /me has no cash field: cash = balance after the latest order (orders are the only cash moves), seeded from the log
+let lastCash = (() => { const l = fs.readFileSync(LOG, 'utf8').split('\n').findLast((x) => x.includes('"balance_after_cents"')); return l ? JSON.parse(l).res.balance_after_cents : null; })();
+function writeLive() {
+  const entry = {};
+  for (const h of me?.holdings || []) if (state.entryAt[h.external_id]) entry[h.external_id] = entryPx(h);
+  const live = { t: Date.now(), pid: process.pid, startedAt: STARTED, dry: DRY, end: END, P, me, state, entry, market: lastMarket, health, hpFeed,
+    trialOff, api: { blockedUntil, backoff, lastOk, authLostAt }, lastReb, diedAt };
+  fs.writeFileSync('live.json.tmp', JSON.stringify(live));
+  fs.renameSync('live.json.tmp', 'live.json');
+  if (me && Date.now() - lastEquity >= 60e3) {
+    lastEquity = Date.now();
+    fs.appendFileSync('data/equity.jsonl', JSON.stringify({ t: lastEquity, value: lastCash == null ? null : lastCash + me.portfolio_value_cents, cash: lastCash, held: me.portfolio_value_cents, realized: me.realized_pnl_cents, unrealized: me.unrealized_pnl_cents, n: me.holdings.length }) + '\n');
+  }
 }
 
 // sell only the engine's own shares: the operator may hold the same stock on this account
@@ -373,6 +396,8 @@ async function scan() {
   const breadth = breadthOf(active.filter((s) => s.last_trade_at && !s.eliminated_at).map((s) => [s.last_price_cents, priceSince(s.external_id, now - BREADTH_WINDOW) ?? s.last_price_cents]));
   if (active.length) lastBreadth = breadth;
   log({ ev: 'scan', breadth: +breadth.toFixed(2), stocks: stocks.length });
+  if (stocks.length) lastMarket = { t: now, breadth, stocks: stocks.map((s) => ({ id: s.external_id, name: s.name, p: s.last_price_cents, st: s.status, el: !!s.eliminated_at,
+    lt: s.last_trade_at ? Date.parse(s.last_trade_at) : 0, prev: prevScan[s.external_id]?.price ?? null, p5: priceSince(s.external_id, now - BREADTH_WINDOW) ?? null })) };
   if (!me || !me.trading_enabled) return;
   // Top basket (18/10): hold the topN highest-priced live stocks, sell one when its rank reaches topExit (deaths: guard).
   // Tape 21:02-03:05, from 866 Cx: top 10 / exit at rank 20 / hourly +404 Cx (halves +111, +212, 14 buys), top 5 +267,

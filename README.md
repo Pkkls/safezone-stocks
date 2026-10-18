@@ -100,6 +100,10 @@ knocked-down price) it made +404 Cx from 866, positive in both halves, in 14 buy
 | `deaths.jsonl` | deaths read from the map |
 | `health.jsonl` | every HP change: `username, hp, max, alive, out` (never positions) |
 | `settled.jsonl` | last known price and status of an eliminated stock when it disappears from the API, to find out what settlement pays |
+| `equity.jsonl` | one point a minute: total value (cash after the latest order plus positions), cash, positions, site PnL |
+
+The engine also rewrites `live.json` every 5 s (git-ignored): what only the running process knows (portfolio, last
+market scan, contestant health, API state), for the dashboard.
 
 ## What was measured
 
@@ -207,6 +211,14 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 
 ## Monitoring
 
+- **Live dashboard**: open http://127.0.0.1:7788 (port `DASH_PORT` in `.env`). The supervisor serves it, so it
+  stays up while the engine restarts and cannot stop trading if it fails. It is read-only and local (bound to
+  127.0.0.1), built from local files only, and pushes every change within 2 s (server-sent events). 39 modules in
+  five sections: portfolio (total value curve, positions with cost, value, rank and HP), strategies (PnL, kill
+  switches, top basket ranking, crash radar, auto-tuning results, parameters, order log, round trips), market
+  (breadth, volume, movers, whales, heat map, trade feed), game (alive players, deaths per hour, causes, lowest HP,
+  settlements) and engine (health, API, restarts, Kick announcements, event log). `node dashboard.mjs` runs it on
+  its own, for working on the page; edits to `dashboard.html` reload open tabs by themselves.
 - `node status.mjs` prints recent deaths, market breadth, trade count, API blocks and the PnL of each strategy, from
   local files only.
 - `trades.jsonl` is the event log, one JSON object per line. Useful events:
@@ -224,6 +236,7 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 | `hp_feed` | the map's health feed appeared or went silent (frame headers, for diagnosis) |
 | `tune`, `tune_crash`, `tune_surv`, `tune_top` | parameter re-tuning result per strategy |
 | `params_reload` | an edit to `params.json` was picked up without a restart |
+| `dashboard_err` | the dashboard server failed to start (trading is not affected) |
 
 - Telegram, if configured: lost session, long API block, strategy switched off, new parameters, daily PnL.
 
@@ -262,6 +275,8 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 | `backtest.mjs` | tape loading, simulator, re-tuning, chat text, health decoder |
 | `check.mjs` | self-check |
 | `status.mjs` | one-screen status from local files |
+| `dashboard.mjs` | live dashboard server (aggregates the local files, server-sent events) |
+| `dashboard.html` | the dashboard page |
 | `import-cookies.mjs` | EditThisCookie import |
 | `kick_say.py` | posts one chat line (Python, because Kick blocks Node's TLS fingerprint) |
 | `scripts/register-task.ps1` | Windows scheduled task |
