@@ -92,7 +92,9 @@ after `END_AT`.
 
 The engine pushes the stream's texts every 2 s over one long-lived ssh connection (only the ones that changed), and
 `stream/run.sh` on a server has ffmpeg draw them (`drawtext`), encode them and send them to the RTMP(S) ingest,
-restarting after any drop. Measured on a 1 GB VPS: 8% of a core and 119 MB at 1280x720, 8 fps. The frame:
+restarting after any drop. It is drawn natively at 1920x1080, 8 fps, and encoded at constant quality (x264 CRF 18, up to
+4 Mb/s): small text stays sharp (18/10, measured on 12 s of live content: 4x less encoding error than the first
+setup, 720p capped at 600 kb/s, SSIM 0.9971 vs 0.9885). Measured on a 1 GB VPS: 14% of a core and 170 MB. The frame:
 
 - **Header**: ASCII "CX" banner, a blinking LIVE tag, total profit (realized + open) big, green or red.
 - **8 tiles**: total value, change since the start (607.46 Cx), cash, invested, positions, round trips won, contestants
@@ -121,7 +123,7 @@ restarting after any drop. Measured on a 1 GB VPS: 8% of a core and 119 MB at 12
 | 5 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths (with what killed them) and revives, newest first |
 | 6 and on, STATUS | every alive contestant, weakest first, 34 per page: HP bar, HP, sigil, and the S P D O L R flags below |
 
-The seven pages on 18/10 around 21:58 UTC (48 alive, two STATUS pages, the mascot telling fun facts):
+The seven pages on 18/10 around 22:12 UTC, 1920x1080 (48 alive, two STATUS pages, the mascot telling fun facts):
 
 ![Stream page 1, portfolio](docs/screenshots/stream-page-1.png)
 

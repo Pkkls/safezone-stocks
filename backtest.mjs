@@ -63,7 +63,7 @@ export function decodeHealth(frames) {
 const col = (k, x) => `\x01${k}${x}\x02`, vis = (x) => x.replace(/\x01.|\x02/g, '');
 export const LAYERS = ['w', 'g', 'r', 'y', 'c'];
 export const START_CASH = 60746; // balance before the first order on 17/10 (45560 after a 15186 buy)
-export function layers(text, anchor = 140) {
+export function layers(text, anchor = 150) {
   const out = Object.fromEntries(LAYERS.map((k) => [k, '']));
   let cur = 'w';
   for (let i = 0; i < text.length; i++) {
@@ -74,7 +74,7 @@ export function layers(text, anchor = 140) {
   }
   // ffmpeg 4.4 drawtext places lines from the glyphs a text contains, so layers with different glyphs drift ~10 px
   // apart: the same "|" at column `anchor` of the first line in every layer gives them all the same extent; past the
-  // right edge of the frame (140 columns from the page, 50 from the bot log) it is measured but never seen.
+  // right edge of the 1080p frame (150 columns from the page, 50 from the bot log) it is measured but never seen.
   for (const k of LAYERS) { const [first, ...rest] = out[k].split('\n'); out[k] = [first.padEnd(anchor) + '|', ...rest].join('\n'); }
   return out;
 }

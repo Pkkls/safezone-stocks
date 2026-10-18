@@ -13,6 +13,6 @@ for k in $(seq 1 "$n"); do
   sleep 1 # a page's layers are replaced together at @@end: one second later all of them are this page's
   mkdir -p $O/p$k && cp $S/*.txt $O/p$k/
   # 6 s of frames: the ticker has scrolled in and the profit line pulses; the last frame is kept
-  (cd $O/p$k && ffmpeg -nostdin -loglevel error -f lavfi -i color=c=0x0b0e14:s=1280x720:r=8:d=6 -vf "$VF" -update 1 -y ../page$k.png)
+  (cd $O/p$k && ffmpeg -nostdin -loglevel error -f lavfi -i color=c=0x0b0e14:s=$SIZE:r=8:d=6 -vf "$VF" -update 1 -y ../page$k.png)
   echo "page $k/$n: $(head -1 $S/c.txt | tr -s ' ' | cut -c1-60)"
 done
