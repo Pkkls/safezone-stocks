@@ -111,13 +111,14 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     { external_id: 'a', name: 'Small', cost_basis_cents: 1000, current_value_cents: 900 },
     { external_id: 'b', name: 'Big', cost_basis_cents: 2000, current_value_cents: 2500 }],
     trades: [{ occurred_at: '2026-10-18T04:29:15Z', side: 'buy', external_id: 'b', cash_cents: 2000 }] };
-  const txt = streamText(me, { b: 'Big' }, { x: { alive: true }, y: { alive: false } }, 0.13, 0, (id) => (id === 'b' ? 'crash' : ''), 3 * 3600e3 + 5 * 60e3);
+  const deaths = [{ u: 'old', t: 1e12, cause: 'damage', source: 'zone' }, { u: 'newest', t: 2e12, cause: 'damage', source: 'knife' }];
+  const txt = streamText(me, { b: 'Big' }, { x: { alive: true }, y: { alive: false } }, 0.13, 0, (id) => (id === 'b' ? 'crash' : ''), 3 * 3600e3 + 5 * 60e3, deaths);
   const lines = txt.split('\n');
-  assert.match(lines[1], /Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2/);
-  assert.match(lines[2], /rising 13 pct {3}Contestants alive 1 {3}Bot up 3h05/);
-  assert.match(lines[5], /^Big +crash +20\.00 +25\.00 +\+5\.00$/, 'highest value first, with its strategy');
+  assert.match(lines[1], /Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Market rising 13 pct/);
+  assert.match(lines[2], /Contestants alive 1 {3}Bot up 3h05/);
+  assert.match(lines[5], /^Big +crash +25\.00 +\+5\.00 {2,}04:29 {2}buy {2}Big/, 'highest value first, its strategy, and the order on the right');
   assert.match(lines[6], /^Small +manual/, 'control: a position the engine did not open is labelled manual');
-  assert.match(txt, /04:29 {2}buy {3}Big/);
-  assert.ok(lines.every((l) => l.length <= 90), 'fits 90 columns');
+  assert.match(txt, /LAST DEATHS \(UTC\)\n {52}\d\d:\d\d {2}newest +knife\n {52}\d\d:\d\d {2}old/, 'deaths newest first, in the right column');
+  assert.ok(lines.every((l) => l.length <= 96), 'fits 96 columns');
 }
 console.log('check ok');

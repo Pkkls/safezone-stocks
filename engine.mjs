@@ -91,8 +91,9 @@ function api(path, body) {
 
 // Map (public, cached 2 s): health, deaths from the roster and from graves. A death knocks the stock -20% 30 s to 2 min
 // later. Known deaths are reloaded from data/deaths.jsonl: an in-game blackout hides graves and health.
-const diedAt = {}, health = {};
-if (fs.existsSync('data/deaths.jsonl')) for (const l of fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); diedAt[d.u] = Math.max(diedAt[d.u] || 0, d.t); }
+const diedAt = {}, health = {}, recentDeaths = []; // recentDeaths: newest last, for the stream
+if (fs.existsSync('data/deaths.jsonl')) for (const l of fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); if (d.t > (diedAt[d.u] || 0)) recentDeaths.push(d); diedAt[d.u] = Math.max(diedAt[d.u] || 0, d.t); }
+recentDeaths.sort((a, b) => a.t - b.t).splice(0, recentDeaths.length - 20);
 let pendingDeath = 0, mapLoaded = false;
 async function readMap() {
   const r = await ctx.request.get(MAP, { headers: H });
@@ -108,6 +109,7 @@ async function readMap() {
       const n = it.grave.username.toLowerCase(), t = Date.parse(it.grave.died_at);
       if ((diedAt[n] || 0) >= t) continue;
       fs.appendFileSync('data/deaths.jsonl', JSON.stringify({ u: n, t, cause: it.grave.cause, source: it.grave.source }) + '\n');
+      recentDeaths.push({ u: n, t, cause: it.grave.cause, source: it.grave.source }); if (recentDeaths.length > 20) recentDeaths.shift();
       diedAt[n] = t;
       if (mapLoaded && Date.now() - t < 2 * 60e3) pendingDeath = Math.max(pendingDeath, t); // live, not a start replay
     }
@@ -207,7 +209,7 @@ async function guard() {
     lastStream = Date.now();
     const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, 'cat > szdash/dash.tmp && mv szdash/dash.tmp szdash/dash.txt'], { stdio: ['pipe', 'ignore', 'ignore'] });
     c.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
-    c.stdin.end(streamText(me, names, health, lastBreadth, STARTED, (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : '')));
+    c.stdin.end(streamText(me, names, health, lastBreadth, STARTED, (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), Date.now(), recentDeaths));
   }
 }
 

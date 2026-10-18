@@ -48,18 +48,23 @@ export function decodeHealth(frames) {
   return out;
 }
 
-// Stream text (90 columns, drawn by ffmpeg on the streaming box). kindOf(id) -> strategy, '' = opened by hand.
-export function streamText(me, names, health, breadth, startedAt, kindOf = () => '', now = Date.now()) {
+// Stream text, 96 columns (1280 px at 20 px DejaVu Mono), drawn by ffmpeg on the streaming box: a header, then
+// positions on the left and the last orders and deaths on the right. kindOf(id) -> strategy, '' = opened by hand;
+// deaths = [{ u, t, cause, source }], newest last (source = zone, knife, drone...; cause is mostly "damage").
+export function streamText(me, names, health, breadth, startedAt, kindOf = () => '', now = Date.now(), deaths = []) {
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
-  const up = Math.floor((now - startedAt) / 60e3);
-  const L = [`SAFEZONE STOCK BOT   play money, automated trading   data ${new Date(now).toISOString().slice(11, 19)} UTC`,
-    `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}`,
-    `Market rising ${Math.round(breadth * 100)} pct   Contestants alive ${Object.values(health).filter((h) => h.alive).length}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
-    '', 'POSITION         TYPE         COST    VALUE   P/L'];
-  for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 10))
-    L.push(`${pad(h.name, 16)} ${pad(kindOf(h.external_id) || 'manual', 8)} ${c(h.cost_basis_cents).padStart(8)} ${c(h.current_value_cents).padStart(8)}   ${s(h.current_value_cents - h.cost_basis_cents)}`);
-  L.push('', 'LAST ORDERS (UTC)');
-  for (const t of (me.trades || []).slice(0, 6)) L.push(`${t.occurred_at.slice(11, 16)}  ${pad(t.side, 4)}  ${pad(names[t.external_id] || '?', 16)} ${c(t.cash_cents).padStart(8)} Cx`);
+  const up = Math.floor((now - startedAt) / 60e3), hm = (t) => new Date(t).toISOString().slice(11, 16);
+  const left = ['POSITION        TYPE      VALUE      P/L'];
+  for (const h of [...me.holdings].sort((a, b) => b.current_value_cents - a.current_value_cents).slice(0, 16))
+    left.push(`${pad(h.name, 15)} ${pad(kindOf(h.external_id) || 'manual', 6)} ${c(h.current_value_cents).padStart(8)} ${s(h.current_value_cents - h.cost_basis_cents).padStart(8)}`);
+  const right = ['LAST ORDERS (UTC)'];
+  for (const t of (me.trades || []).slice(0, 8)) right.push(`${hm(t.occurred_at)}  ${pad(t.side, 4)} ${pad(names[t.external_id] || '?', 15)} ${c(t.cash_cents).padStart(7)}`);
+  right.push('', 'LAST DEATHS (UTC)');
+  for (const d of deaths.slice(-6).reverse()) right.push(`${hm(d.t)}  ${pad(d.u, 18)} ${pad(d.source || d.cause || '', 13)}`);
+  const L = [`SAFEZONE STOCK BOT   play money, automated trading                    data ${new Date(now).toISOString().slice(11, 19)} UTC`,
+    `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}   Market rising ${Math.round(breadth * 100)} pct`,
+    `Contestants alive ${Object.values(health).filter((h) => h.alive).length}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`, ''];
+  for (let i = 0; i < Math.max(left.length, right.length); i++) L.push(((left[i] || '').padEnd(52) + (right[i] || '')).trimEnd());
   return L.join('\n') + '\n';
 }
 
