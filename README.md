@@ -216,43 +216,122 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 
 Open http://127.0.0.1:7788 while the engine runs (port `DASH_PORT` in `.env`). The supervisor serves it, so it stays
 up while the engine restarts and cannot stop trading if it fails. It is read-only and local (bound to 127.0.0.1),
-built from local files only, and pushes every change within 2 s (server-sent events). It works at phone width too
-([screenshot](docs/screenshots/mobile.png)).
+built from local files only, and pushes every change within 2 s (server-sent events). It works at phone width too.
 
-39 modules in five sections:
+The screenshots below are the live dashboard on 18/10 around 04:00 UTC, the first evening of the event. The whole
+page in one image: [overview.png](docs/screenshots/overview.png).
 
-- **Portfolio**: total value and gain since the start, cash, invested, unrealized and closed PnL, the total value
-  curve, allocation by strategy, and every position with cost, value, PnL, peak, top rank, holding time, the
-  contestant's HP and its exit condition.
+![Header: engine status, data age, time left in the event](docs/screenshots/header.png)
 
-  ![Portfolio](docs/screenshots/portfolio.png)
+39 modules in five sections.
 
-- **Strategies**: PnL by strategy, kill switches, market breadth against the momentum gate, the top basket ranking
-  with one-hour sparklines, the crash radar, the latest auto-tuning results, current parameters, the distribution of
-  round trips, the order log (filter: buys, sells, rejected) and the closed round trips.
+### Portfolio
 
-  ![Strategies](docs/screenshots/strategies.png)
+Total value and gain since the start, cash, invested, unrealized and closed PnL, the total value curve, allocation by
+strategy, and every position with cost, value, PnL, peak, top rank, holding time, the contestant's HP and its exit
+condition.
 
-- **Market**: breadth over 24 h, trades per minute, active wallets, volume per 10 minutes, top gainers and losers,
-  the largest trades of the hour, a heat map of every live stock and the trade feed.
+![Portfolio](docs/screenshots/portfolio.png)
 
-  ![Market](docs/screenshots/market.png)
+<details>
+<summary>Close-ups: key figures, value curve with its tooltip, positions</summary>
 
-- **Game**: contestants alive, deaths per hour and by cause, the latest deaths, the lowest HP, who is outside the
-  zone, and settled stocks.
+![Key figures](docs/screenshots/kpis.png)
+![Total value curve, hover tooltip](docs/screenshots/equity-tooltip.png)
+![Positions](docs/screenshots/positions.png)
 
-  ![Game](docs/screenshots/game.png)
+</details>
 
-- **Engine**: health (last `/me`, last scan, session), API state, health feed, time left in the event, starts and
-  watchdog exits, Kick announcements, data file sizes and the event log (filter: orders, tuning, health).
+### Strategies
 
-  ![Engine](docs/screenshots/engine.png)
+PnL by strategy, kill switches, market breadth against the momentum gate, the top basket ranking with one-hour
+sparklines, the crash radar, the latest auto-tuning results, current parameters, the distribution of round trips,
+the order log (filter: buys, sells, rejected) and the closed round trips.
+
+![Strategies](docs/screenshots/strategies.png)
+
+<details>
+<summary>Close-ups: strategy PnL and kill switches, top basket, crash radar, tuning, order log, round trips</summary>
+
+![PnL by strategy, kill switches, market breadth](docs/screenshots/strategy-pnl.png)
+![Top basket ranking](docs/screenshots/top-basket.png)
+![Crash radar](docs/screenshots/crash-radar.png)
+![Auto-tuning, parameters, round trip distribution](docs/screenshots/tuning-params.png)
+![Order log](docs/screenshots/orders.png)
+![Order log, rejected orders only](docs/screenshots/orders-rejected.png)
+![Round trips](docs/screenshots/round-trips.png)
+
+</details>
+
+### Market
+
+Breadth over 24 h, trades per minute, active wallets, volume per 10 minutes, top gainers and losers, the largest
+trades of the hour, a heat map of every live stock and the trade feed.
+
+![Market](docs/screenshots/market.png)
+
+<details>
+<summary>Close-ups: breadth, volume with its tooltip, movers and whales, heat map with its tooltip, trade feed</summary>
+
+![Breadth over time, live activity](docs/screenshots/breadth.png)
+![Volume per 10 minutes, hover tooltip](docs/screenshots/volume-tooltip.png)
+![Top gainers, top losers, whales](docs/screenshots/movers-whales.png)
+![Market heat map, hover tooltip](docs/screenshots/heat-map-tooltip.png)
+![Trade feed](docs/screenshots/trade-feed.png)
+
+</details>
+
+### Game
+
+Contestants alive, deaths per hour and by cause, the latest deaths, the lowest HP, who is outside the zone, and
+settled stocks.
+
+![Game](docs/screenshots/game.png)
+
+<details>
+<summary>Close-ups: deaths, health, settlements</summary>
+
+![Contestants, deaths per hour, causes](docs/screenshots/deaths.png)
+![Latest deaths, lowest HP, outside the zone](docs/screenshots/health.png)
+![Settlements](docs/screenshots/settlements.png)
+
+</details>
+
+### Engine
+
+Health (last `/me`, last scan, session), API state, health feed, time left in the event, starts and watchdog exits,
+Kick announcements, data file sizes and the event log (filter: orders, tuning, health).
+
+![Engine](docs/screenshots/engine.png)
+
+<details>
+<summary>Close-ups: engine health, event log filtered on health events</summary>
+
+![Engine health, API, health feed, event end](docs/screenshots/engine-health.png)
+![Event log, health events only](docs/screenshots/events-health.png)
+
+</details>
+
+### On a phone
+
+<table>
+<tr>
+<td><img src="docs/screenshots/mobile-home.png" width="190" alt="First screen"></td>
+<td><img src="docs/screenshots/mobile-positions.png" width="190" alt="Positions"></td>
+<td><img src="docs/screenshots/mobile-top-basket.png" width="190" alt="Top basket"></td>
+<td><img src="docs/screenshots/mobile-movers.png" width="190" alt="Top gainers and losers"></td>
+<td><img src="docs/screenshots/mobile-engine.png" width="190" alt="Engine health and API"></td>
+</tr>
+</table>
+
+### Notes
 
 Times show in the browser's time zone. The tape arrives in 3-minute batches, so the trade feed lags by up to 3 minutes;
 prices and positions refresh every 5 seconds.
 
 `node dashboard.mjs` runs it on its own, for working on the page; edits to `dashboard.html` reload open tabs by
-themselves. `node scripts/screenshots.mjs` refreshes the screenshots above: it replaces every contestant name with
+themselves. `node scripts/screenshots.mjs` retakes all the screenshots above from the running dashboard (32 images,
+desktop and phone, with the hover tooltips and filters shown). `--anon` replaces every contestant name with
 "Player N", hides stock ids and the site host, and stops if any of them is still on the page.
 
 ## Monitoring
@@ -303,7 +382,7 @@ themselves. `node scripts/screenshots.mjs` refreshes the screenshots above: it r
 - **The engine never stores or prints credentials.** The site session lives in the browser profile. The Kick bearer
   is read from `.env`.
 - **Recorded market data stays local**: it contains other players' ids. `data/` is git-ignored except the anonymized
-  fixture. The published screenshots carry no contestant name, stock id or site host.
+  fixture. The dashboard screenshots show live data as published by the event (contestant names, prices).
 
 ## Files
 
@@ -318,6 +397,6 @@ themselves. `node scripts/screenshots.mjs` refreshes the screenshots above: it r
 | `import-cookies.mjs` | EditThisCookie import |
 | `kick_say.py` | posts one chat line (Python, because Kick blocks Node's TLS fingerprint) |
 | `scripts/register-task.ps1` | Windows scheduled task |
-| `scripts/screenshots.mjs` | anonymized dashboard screenshots for this README |
+| `scripts/screenshots.mjs` | dashboard screenshots for this README (`--anon` for anonymized ones) |
 | `docs/screenshots/` | those screenshots |
 | `.env.example` | configuration template |

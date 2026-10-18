@@ -39,7 +39,7 @@ nav a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
 .bar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; color: var(--ink-2); flex-wrap: wrap; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); font-weight: 500; color: var(--ink); white-space: nowrap; }
 .pill.good .ico { color: var(--good); } .pill.warning .ico { color: var(--warning); } .pill.critical .ico { color: var(--critical); } .pill.serious .ico { color: var(--serious); }
-.livedot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.livedot { display: inline-block; vertical-align: middle; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .livedot.on { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .meta { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
