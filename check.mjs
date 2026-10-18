@@ -2,7 +2,7 @@
 // refuse to adopt params that do not clearly beat the current ones. node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv } from './backtest.mjs';
+import { prepare, simulate, tune, compact, loadTape, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 const ref = fs.readFileSync('data/opening-17-10.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -114,5 +114,21 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.strictEqual(simulateSurv(prepare(tape), { ...Q, survTop: 0 }, deaths).n, 0, 'control: survTop 0 trades nothing');
   const many = Array.from({ length: 10 }, (_, i) => ({ u: 'deadname', t: t + (35 + i * 5) * 60e3 }));
   assert.deepStrictEqual(tuneSurv(tape, { ...Q, survTop: 2, survHold: 600e3 }, many, { dead: 'deadname' }).adopt, { survTop: 0 }, 'losing strategy must be switched off');
+}
+// kill switch: round trips are counted from the last re-arm marker only
+{
+  const tr = (side, name, why, c) => JSON.stringify({ ev: `stock-market/${side}`, name, why, status: 200, res: { cash_cents: c } });
+  const lines = [tr('buy', 'A', 'crash -30%', 1000), tr('sell', 'A', 'time', 500), tr('buy', 'B', 'mom +20%', 1000), tr('sell', 'B', 'time', 3000)];
+  assert.deepStrictEqual(trialTally(lines, 'crash'), { n: 1, pnl: -500 }, 'tally counts only the crash round trip');
+  const rearmed = [...lines, JSON.stringify({ ev: 'crash_on' }), tr('buy', 'C', 'crash -40%', 1000), tr('sell', 'C', 'time', 1200)];
+  assert.deepStrictEqual(trialTally(rearmed, 'crash'), { n: 1, pnl: 200 }, 'control: trips before crash_on must be forgotten');
+}
+// watchdog: stale after 5 min without success, never during an API block; lost after 3 min of 401
+{
+  const t = 1e12, m = 60e3;
+  assert.deepStrictEqual(stuck(t + 6 * m, t, 0, 0), { stale: true, lost: false }, 'stale not detected');
+  assert.deepStrictEqual(stuck(t + 6 * m, t, t + 5 * m, 0), { stale: false, lost: false }, 'control: a block is not a hang');
+  assert.deepStrictEqual(stuck(t + 4 * m, t + 4 * m, 0, t), { stale: false, lost: true }, 'lost session not detected');
+  assert.deepStrictEqual(stuck(t + 2 * m, t + 2 * m, 0, t), { stale: false, lost: false }, 'control: 2 min of 401 is tolerated');
 }
 console.log('check ok');

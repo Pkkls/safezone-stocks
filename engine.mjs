@@ -4,8 +4,8 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { tune, tuneCrash, tuneSurv, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth } from './backtest.mjs';
+import { execFile, fork } from 'node:child_process';
+import { tune, tuneCrash, tuneSurv, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST; // event site domain, e.g. example.com (api.<host>, event-public.<host>)
@@ -15,6 +15,21 @@ const LOGIN = process.argv.includes('--login');
 const DRY = process.argv.includes('--dry');
 const END = Date.parse(process.env.END_AT || '2026-10-24T20:20:00Z'); // the engine exits for good after this
 if (Date.now() > END && !LOGIN) process.exit(0);
+// Supervisor: the scheduled task runs this file, which re-runs the engine as a child and restarts it whenever it dies
+// (crash, watchdog exit), 10 s after a long run, backing off to 10 min on a crash loop. The child exits when its IPC
+// channel closes (Stop-ScheduledTask kills the supervisor), so no orphan keeps trading or holds the profile.
+if (!LOGIN && !process.env.SZ_CHILD) {
+  let wait = 5e3;
+  for (;;) {
+    const t0 = Date.now();
+    const code = await new Promise((ok) => fork(process.argv[1], process.argv.slice(2), { env: { ...process.env, SZ_CHILD: '1' } }).on('exit', ok));
+    if (code === 0 || Date.now() > END) process.exit(0);
+    wait = Date.now() - t0 > 30 * 60e3 ? 10e3 : Math.min(wait * 2, 10 * 60e3);
+    fs.appendFileSync('trades.jsonl', JSON.stringify({ t: new Date().toISOString(), ev: 'restart', code, wait_s: wait / 1e3 }) + '\n');
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+if (process.env.SZ_CHILD) process.on('disconnect', () => process.exit(0));
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } };
 
 // Strategy params. Defaults from backtest.mjs on the opening tape (17/10): 2-min lookback and a 10-min
@@ -24,7 +39,10 @@ const DEFAULTS = { lookback: 2 * 60e3, entryMin: 0.15, entryMax: 99, trail: 0.80
   // crash rebound + run mode, self-tuned by retune() through tuneCrash (backtest.mjs)
   crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
   // survivors after a death, self-tuned through tuneSurv (survTop 0 = off)
-  survTop: 2, survHold: 30 * 60e3 };
+  survTop: 2, survHold: 30 * 60e3,
+  // rebound/survivor size cap as a share of the pool's cash reserve (see sizeCap). 18/10 tape (6.4 h, 17 crash
+  // entries, own impact both ways): 0.0075 +160 Cx, 0.015 +248, 0.02 +267 but worst trade -192, 0.05 loses
+  maxImpact: 0.015 };
 const PARAMS = 'params.json';
 let P = { ...DEFAULTS, ...readJson(PARAMS) };
 const MIN_BUY = 1000;          // 10.00 minimum per entry
@@ -58,12 +76,7 @@ const lastScan = {}; // external_id -> { price, t } at the previous scan
 const trialOff = {};
 function trialOn(prefix) {
   if (trialOff[prefix]) return false;
-  const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter((l) => l.includes('"status":200') && /"ev":"stock-market\/(buy|sell)"/.test(l)).map((l) => JSON.parse(l));
-  const open = {}; let n = 0, pnl = 0;
-  for (const e of lines) {
-    if (e.ev.endsWith('buy')) { if (String(e.why).startsWith(prefix)) open[e.name] = e.res.cash_cents; else delete open[e.name]; }
-    else if (open[e.name] != null) { n++; pnl += e.res.cash_cents - open[e.name]; delete open[e.name]; }
-  }
+  const { n, pnl } = trialTally(fs.readFileSync(LOG, 'utf8').split('\n'), prefix); // counted since the last re-arm
   if (n >= CRASH_TRIAL && pnl < 0) { trialOff[prefix] = true; log({ ev: `${prefix}_off`, n, pnl }); notify(`strategy ${prefix} switched off: ${n} round trips, ${(pnl / 100).toFixed(2)} Cx`); }
   return !trialOff[prefix];
 }
@@ -78,8 +91,9 @@ let pendingDeath = 0;
 // Size cap: pools are thin (cash reserve R ~ R0*sqrt(P/1000), R0 = 10k Cx). A buy of c moves the price ~2c/R and the
 // round trip costs ~2c/R. 1st live dip (17/10 22:18, 219 Cx at 10.69): our own buy pushed +4.2%, the round trip
 // lost -3.2% though the stock "rose" 1069 -> 1111. Cap c at 0.75% of R: ~1.5% round-trip impact.
-const R0 = 1e6, MAX_IMPACT = 0.0075;
-const sizeCap = (priceCents) => Math.floor(R0 * Math.sqrt(priceCents / 1000) * MAX_IMPACT);
+// The cap is P.maxImpact (raised to 1.5% after the 18/10 size sweep, see DEFAULTS).
+const R0 = 1e6;
+const sizeCap = (priceCents) => Math.floor(R0 * Math.sqrt(priceCents / 1000) * P.maxImpact);
 let status = {}; // external_id -> active | paused | eliminated..., refreshed by scan()
 const save = () => { fs.writeFileSync(STATE + '.tmp', JSON.stringify(state)); fs.renameSync(STATE + '.tmp', STATE); };
 const log = (o) => { const l = JSON.stringify({ t: new Date().toISOString(), ...o }); fs.appendFileSync(LOG, l + '\n'); console.log(l); };
@@ -149,6 +163,7 @@ function api(path, body) {
 }
 
 let me = null, authAlerted = false, lastBreadth = null; // null until the first scan: regime unknown, no dump exit
+let lastOk = Date.now(), authLostAt = 0; // watchdog inputs: last /me 200 or non-empty scan; first 401/403 of a streak
 
 // Live map (separate host, public, cached 2 s). A contestant's death puts a -20% impulse on their stock 30 s to
 // 2 min later (17/10, four deaths: 10.28 -> 8.22, 10.25 -> 8.18, 14.89 -> 11.83, 11.56 -> 8.97).
@@ -188,9 +203,14 @@ let mapLoaded = false;
 // Health (added 18/10: avoid buying contestants about to die), decoded by decodeHealth (backtest.mjs) from the map snapshot.
 const health = {}; // lowercased username -> { hp, max, alive, out }
 // every change is appended to data/health.jsonl so HP-based rules can be backtested later
+let hpFeed = null; // logged on every change (hp_feed): the feed went silent from deploy to 18/10 02:30 with no trace
 function readHealth(frames) {
-  const lines = [];
-  for (const [u, h] of Object.entries(decodeHealth(frames))) {
+  const lines = [], hp = decodeHealth(frames), n = Object.keys(hp).length;
+  if ((n > 0) !== hpFeed) {
+    hpFeed = n > 0; // binary frame headers only (kind:bytes:records), never their content: kind 1 carries positions
+    log({ ev: 'hp_feed', on: hpFeed, n, frames: frames.length, binary: frames.filter((f) => f.binary).map((f) => { const b = Buffer.from(f.binary, 'base64'); return `${b[0]}:${b.length}:${b.length >= 34 ? b.readUInt16LE(32) : -1}`; }) });
+  }
+  for (const [u, h] of Object.entries(hp)) {
     const o = health[u];
     if (!o || o.hp !== h.hp || o.alive !== h.alive || o.out !== h.out) lines.push(JSON.stringify({ t: Date.now(), u, ...h }));
     health[u] = h;
@@ -236,11 +256,12 @@ async function guard() {
   const r = await api('stock-market/me');
   if (r.blocked) return;
   if (r.s === 401 || r.s === 403) {
+    authLostAt ||= Date.now();
     if (!authAlerted) { authAlerted = true; log({ ev: 'auth_lost', status: r.s }); notify('session expired: run `node engine.mjs --login` (or import-cookies.mjs), then restart'); }
     return;
   }
   let holdings;
-  if (r.s === 200) { if (authAlerted) log({ ev: 'auth_ok' }); authAlerted = false; me = r.j; holdings = me.holdings; }
+  if (r.s === 200) { if (authAlerted) log({ ev: 'auth_ok' }); authAlerted = false; authLostAt = 0; lastOk = Date.now(); me = r.j; holdings = me.holdings; }
   else {
     // /me 500s ~4% of ticks while sells still go through: keep the stop alive on the last known
     // holdings priced from the public per-stock endpoint.
@@ -323,7 +344,8 @@ async function scan() {
       if (k.eliminated_at && !listed.has(id)) { fs.appendFileSync('data/settled.jsonl', JSON.stringify({ t: now, id, ...k }) + '\n'); delete lastKnown[id]; }
     }
   }
-  for (const s of stocks) lastKnown[s.external_id] = { name: s.name, price: s.last_price_cents, status: s.status, eliminated_at: s.eliminated_at, settles_at: s.settles_at };
+  if (stocks.length) lastOk = now;
+  for (const s of stocks) lastKnown[s.external_id] ={ name: s.name, price: s.last_price_cents, status: s.status, eliminated_at: s.eliminated_at, settles_at: s.settles_at };
   for (const s of stocks) { // merge: a failed page must not erase known statuses
     status[s.external_id] = s.status;
     // a dead contestant stays status 'active' with eliminated_at/settles_at set (settles 4 h later, value unknown
@@ -438,19 +460,32 @@ async function record() {
 }
 
 // Walk-forward retune on the last TUNE_WINDOW of tape; adopts new params only past backtest.mjs guard rails.
+// Crash and survivor replays are cheap (~1 s for 6 h) and their events rare (17 crashes in 6.4 h on 18/10): they get
+// a 24 h window, 4x the sample. Momentum keeps 6 h: its grid replay blocks the event loop ~15 s at 6 h.
+const EVENT_WINDOW = 24 * 3600e3;
 async function retune() {
   const tape = loadTape(Date.now() - TUNE_WINDOW);
   if (tape.length < 500) return log({ ev: 'tune_skip', trades: tape.length });
   const { cur, best, adopt } = tune(tape, P);
   log({ ev: 'tune', trades: tape.length, cur, best: { ...best.r, P: best.P }, adopted: !!adopt });
   // crash rebound + run mode: same walk-forward idea, adopted only if positive in both halves of the window
-  const c = tuneCrash(tape, P);
+  const long = loadTape(Date.now() - EVENT_WINDOW);
+  const c = tuneCrash(long, P);
   log({ ev: 'tune_crash', cur: c.cur, best: c.best && { ...c.best.r, Q: c.best.Q }, adopted: !!c.adopt });
   // survivors: replayed on the logged deaths; may switch the strategy off (survTop 0) or back on
   const deaths = [...new Map(fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).map((d) => [d.u + d.t, d])).values()].sort((a, b) => a.t - b.t);
   const names = Object.fromEntries(Object.entries(lastKnown).map(([id, k]) => [id, String(k.name).toLowerCase()]));
-  const sv = tuneSurv(tape, { ...P, runStart: c.adopt?.runStart ?? P.runStart, runTrail: c.adopt?.runTrail ?? P.runTrail }, deaths, names);
+  const sv = tuneSurv(long, { ...P, runStart: c.adopt?.runStart ?? P.runStart, runTrail: c.adopt?.runTrail ?? P.runTrail }, deaths, names);
   log({ ev: 'tune_surv', cur: sv.cur, best: sv.best && { ...sv.best.r, Q: sv.best.Q }, adopt: sv.adopt });
+  // a kill switch is not forever: re-arm the strategy once the set it will trade wins again in both halves of the window
+  const rearm = (prefix, r) => {
+    if (trialOn(prefix) || !r || r.n < 8 || r.h1 <= 0 || r.h2 <= 0) return;
+    delete trialOff[prefix];
+    log({ ev: `${prefix}_on`, ...r });
+    notify(`strategy ${prefix} switched back on: replay ${r.n} trades, ${r.total.toFixed(2)}`);
+  };
+  rearm('crash', c.adopt ? c.best.r : c.cur);
+  rearm('surv', sv.adopt?.survTop ? sv.best.r : sv.cur);
   if (!adopt && !c.adopt && !sv.adopt) return;
   P = { ...P, ...adopt, ...c.adopt, ...sv.adopt }; // keep params the grids do not cover (dumpExit)
   fs.writeFileSync(PARAMS, JSON.stringify(P));
@@ -475,8 +510,14 @@ async function reloadParams() {
 
 const loop = (fn, ms) => { let busy = false; setInterval(async () => { if (busy) return; busy = true; try { await fn(); } catch (e) { log({ ev: 'err', fn: fn.name, msg: e.message }); } finally { busy = false; } }, ms); };
 setInterval(() => { if (Date.now() > END) { log({ ev: 'end' }); daily().finally(() => process.exit(0)); } }, 60e3);
+// Watchdog (the supervisor restarts us): no healthy /me or scan for 5 min outside an API block, or a session lost for
+// 3 min (a profile opened while still locked serves no cookie; a fresh process reopens it), means stuck.
+setInterval(() => {
+  const s = stuck(Date.now(), lastOk, blockedUntil, authLostAt);
+  if (s.stale || s.lost) { log({ ev: 'watchdog', ...s }); process.exit(1); }
+}, 30e3);
 log({ ev: 'start', dry: DRY, P });
-await guard();
+await guard().catch((e) => log({ ev: 'err', fn: 'guard', msg: e.message })); // a network error here must not kill the start
 loop(guard, ME_EVERY);
 loop(scan, SCAN_EVERY);
 loop(readMap, 10e3);

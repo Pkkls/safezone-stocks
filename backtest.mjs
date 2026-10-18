@@ -213,6 +213,22 @@ export function tuneSurv(tape, current, deaths, names, minTrades = 8) {
   return { cur, best, adopt: null };
 }
 
+// Kill-switch tally: closed round trips of a strategy (buy reason prefix) in trades.jsonl lines, counted from its
+// last re-arm (a `<prefix>_on` event), so a strategy the tuner switched back on starts a fresh trial.
+export function trialTally(lines, prefix) {
+  const open = {}; let n = 0, pnl = 0;
+  for (const l of lines.slice(lines.findLastIndex((x) => x.includes(`"ev":"${prefix}_on"`)) + 1)) {
+    if (!l.includes('"status":200') || !/"ev":"stock-market\/(buy|sell)"/.test(l)) continue;
+    const e = JSON.parse(l);
+    if (e.ev.endsWith('buy')) { if (String(e.why).startsWith(prefix)) open[e.name] = e.res.cash_cents; else delete open[e.name]; }
+    else if (open[e.name] != null) { n++; pnl += e.res.cash_cents - open[e.name]; delete open[e.name]; }
+  }
+  return { n, pnl };
+}
+
+// Engine watchdog: stuck when nothing worked for 5 min outside an API block, or the session is lost for 3 min.
+export const stuck = (now, lastOk, blockedUntil, authLostAt) => ({ stale: now - Math.max(lastOk, blockedUntil) > 5 * 60e3, lost: authLostAt > 0 && now - authLostAt > 3 * 60e3 });
+
 export const GRID = [];
 for (const lookback of [2, 5]) for (const entryMin of [0.05, 0.15, 0.3]) for (const entryMax of [0.6, 99])
   for (const trail of [0.7, 0.8, 0.9]) for (const maxHold of [0, 10, 30]) for (const minBreadth of [0, 0.4, 0.6])

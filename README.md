@@ -62,12 +62,16 @@ Every 5 s it checks its positions, every 10 s it reads the map, every 15 s it sc
 
 **Guard rails**:
 
-- Each strategy switches itself off after 10 round trips if their total is negative (Telegram alert).
-- Order size is capped at 0.75% of the pool's cash reserve, about 1.5% round-trip impact.
+- Each strategy switches itself off after 10 round trips if their total is negative (Telegram alert). The re-tuning
+  switches it back on when the setting it would trade wins again in both halves of its window (at least 8 trades);
+  the 10-round-trip count then starts over.
+- Rebound and survivor orders are capped at `maxImpact` (1.5%) of the pool's cash reserve. On the 18/10 tape the crash
+  entries made +160 Cx at 0.75%, +248 at 1.5%; beyond 2% the own impact eats the rebound.
 - At most 6 positions, with a 30 min cooldown before re-entering a stock.
 - Positions you open yourself are managed too, but never on a timer: 15% trailing stop, plus the death, low-health
   and dump exits. When you hold the same stock as the engine, it only sells its own shares.
-- **Self-tuning**, at start and every 2 hours, on the last 6 hours of tape:
+- **Self-tuning**, at start and every 2 hours, on the last 6 hours of tape for momentum and 24 hours for crash and
+  survivors (rare events, and their replay is cheap):
   - momentum: adopts new parameters only if they beat the current ones by a clear margin over at least 10 trades;
   - crash rebound and run mode (`crashDrop`, `crashFlat`, `dipHold`, `runStart`, `runTrail`): 162 combinations
     replayed exactly as traded, adopted only with at least 8 trades, a profit in both halves of the window, and a
@@ -187,6 +191,11 @@ Stop-ScheduledTask SafezoneStocks; Start-ScheduledTask SafezoneStocks
 The task starts 1 minute after you log in to Windows. The PC must stay awake: sleep pauses the engine. The engine
 exits for good after `END_AT`.
 
+Self-healing: the process the task starts is a supervisor that runs the engine as a child and restarts it whenever
+it dies (10 s after a long run, backing off to 10 min in a crash loop). The engine exits on purpose, to be restarted,
+when nothing worked for 5 minutes outside an API block, or when the session stays lost for 3 minutes (a profile
+reopened by a fresh process gets its cookie back). Stopping the task stops both.
+
 ## Monitoring
 
 - `node status.mjs` prints recent deaths, market breadth, trade count, API blocks and the PnL of each strategy, from
@@ -200,7 +209,10 @@ exits for good after `END_AT`.
 | `kick_say` | chat announcement result (`FOLLOWERS_ONLY_ERROR` means the chat only accepts followers) |
 | `auth_lost` | the site session expired: log in again |
 | `blocked` | rate limited, the engine pauses itself |
+| `restart`, `watchdog` | the supervisor restarted a dead engine (exit code, wait); the engine found itself stuck |
 | `crash_off`, `surv_off` | a strategy switched itself off |
+| `crash_on`, `surv_on` | the re-tuning switched it back on |
+| `hp_feed` | the map's health feed appeared or went silent (frame headers, for diagnosis) |
 | `tune` | parameter re-tuning result |
 
 - Telegram, if configured: lost session, long API block, strategy switched off, new parameters, daily PnL.
@@ -215,7 +227,8 @@ exits for good after `END_AT`.
   - the dump exit;
   - the chat message format;
   - the health decoder;
-  - the cookie sorter.
+  - the cookie sorter;
+  - the kill-switch tally (counted from the last re-arm) and the watchdog's stuck rule.
 
   Each check has a control case that must fail.
 
