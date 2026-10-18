@@ -148,7 +148,7 @@ async function trade(side, h, payload, why) {
   if (DRY) return log({ ev: 'dry', side, name: h.name, why, body });
   const r = await api(side, body), id = h.external_id;
   log({ ev: side, name: h.name, why, status: r.s, res: r.j });
-  if (r.j?.balance_after_cents != null) lastCash = r.j.balance_after_cents;
+  if (r.j?.balance_after_cents != null) { lastCash = r.j.balance_after_cents; orderSeq++; }
   if (r.s === 200 && r.j?.shares) { if (side.endsWith('buy')) state.shares[id] = String(BigInt(state.shares[id] || 0) + BigInt(r.j.shares)); else delete state.shares[id]; }
   if (r.s === 200 && process.env.KICK_BEARER) say(h.name, sayText(side, h.name, r.j?.cash_cents ?? 0, fs.readFileSync(LOG, 'utf8').split('\n')));
   return r;
@@ -164,7 +164,21 @@ async function sellOwn(h, why) {
   delete state.peak[id]; delete state.entryAt[id]; delete state.kind[id]; state.exitedAt[id] = Date.now();
   me.holdings = me.holdings.filter((x) => x.external_id !== id);
 }
-const cash = async () => (await api('cx-bucks/balance')).j?.balance_cents ?? 0;
+// Cx Bucks balance. Orders move it (balance_after_cents, kept in lastCash); any other change (18/10: the site's "double
+// Cx Bucks", the shop) is logged as cash_in / cash_out and summed in state.deposits, so the gain since the start counts
+// trading only. An order completed during the call makes the comparison meaningless: skipped then.
+let orderSeq = 0, cashAt = 0;
+async function cash() {
+  const seq = orderSeq, r = await api('cx-bucks/balance'), b = r.j?.balance_cents;
+  if (r.s !== 200 || b == null) return 0;
+  if (seq === orderSeq && lastCash != null && b !== lastCash) {
+    state.deposits = (state.deposits || 0) + b - lastCash; save();
+    log({ ev: b > lastCash ? 'cash_in' : 'cash_out', cents: b - lastCash, balance: b, deposits: state.deposits });
+  }
+  if (seq === orderSeq) lastCash = b;
+  cashAt = Date.now();
+  return b;
+}
 const entryCache = {}; // entry price = price_after of the last successful buy of that stock in the log
 function entryPx(h) {
   const k = `${h.external_id}:${state.entryAt[h.external_id]}`;
@@ -220,6 +234,7 @@ async function guard() {
     lastPrice[id] = p;
     if (why) await sellOwn(h, why);
   }
+  if (Date.now() - cashAt > 60e3) await cash(); // the balance once a minute, so a deposit shows without an order
   save();
   writeLive();
 }
@@ -269,9 +284,9 @@ function pushStream() {
   const out = { pg: total >= 0 ? `PROFIT ${cx(total)} Cx` : ' ', pr: total < 0 ? `PROFIT ${cx(total)} Cx` : ' ', ps: `realized ${cx(me.realized_pnl_cents)}   open ${cx(me.unrealized_pnl_cents)}` };
   Object.assign(out, { ticker: streamTicker(d), dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c });
   // KPI tiles (labels are in run.sh)
-  const k = (x) => Math.round(x / 100).toLocaleString('en-US'), value = lastCash == null ? null : lastCash + me.portfolio_value_cents;
+  const k = (x) => Math.round(x / 100).toLocaleString('en-US'), base = START_CASH + (state.deposits || 0), value = lastCash == null ? null : lastCash + me.portfolio_value_cents;
   const won = trips.filter((t) => t.pnl > 0).length, left = Math.max(0, END - now), alive = Object.values(health).filter((h) => h.alive).length;
-  Object.assign(out, { ka: value == null ? '-' : `${k(value)} Cx`, kb: value == null ? '-' : `${value >= START_CASH ? '+' : ''}${Math.round((value / START_CASH - 1) * 100)}%`,
+  Object.assign(out, { ka: value == null ? '-' : `${k(value)} Cx`, kb: value == null ? '-' : `${value >= base ? '+' : ''}${Math.round((value / base - 1) * 100)}%`,
     kc: lastCash == null ? '-' : `${k(lastCash)} Cx`, kd: `${k(me.portfolio_value_cents)} Cx`, ke: String(me.holdings.length), kf: `${won}/${trips.length}`,
     kg: `${alive}/${Object.keys(roster).length || '-'}`, kh: `${Math.floor(left / 86400e3)}d ${Math.floor((left % 86400e3) / 3600e3)}h` });
   // 24 h value chart, green when up over the window, red when down

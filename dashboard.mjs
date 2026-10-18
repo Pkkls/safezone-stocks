@@ -167,7 +167,7 @@ function build() {
   const files = Object.fromEntries(['trades.jsonl', 'live.json', 'state.json', 'params.json'].concat(fs.existsSync('data') ? fs.readdirSync('data').map((f) => 'data/' + f) : []).map((f) => { try { return [f, fs.statSync(f).size]; } catch { return [f, 0]; } }));
 
   return {
-    now, startCash: START_CASH,
+    now, startCash: START_CASH + (st.deposits || 0), // deposits (cash_in, e.g. "double Cx Bucks") are not gains
     engine: { status, pid: live.pid, startedAt: live.startedAt, liveAge: age(live.t), lastStart, scanAge: age(live.market?.t), okAge: age(api.lastOk), blockedUntil: api.blockedUntil, backoff: api.backoff, authLostAt: api.authLostAt, hpFeed: live.hpFeed, end: live.end, dry: live.dry, lastReb: live.lastReb,
       restarts: events.filter((e) => /^(start|restart|watchdog)$/.test(e.ev) && e.t > now - DAY).map((e) => ({ t: e.t, ev: e.ev, d: e.d })),
       errors: events.filter((e) => /err|blocked|auth_lost|watchdog/.test(e.ev) && e.t > now - HOUR).length, kick, files },

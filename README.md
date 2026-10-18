@@ -97,7 +97,7 @@ restarting after any drop. It is drawn natively at 1920x1080, 8 fps, and encoded
 setup, 720p capped at 600 kb/s, SSIM 0.9971 vs 0.9885). Measured on a 1 GB VPS: 14% of a core and 170 MB. The frame:
 
 - **Header**: ASCII "CX" banner, a blinking LIVE tag, total profit (realized + open) big, green or red.
-- **8 tiles**: total value, change since the start (607.46 Cx), cash, invested, positions, round trips won, contestants
+- **8 tiles**: total value, change since the start (607.46 Cx plus any deposit), cash, invested, positions, round trips won, contestants
   alive, time left in the event.
 - **Left**: the current page, a new one every 20 s (5, plus one STATUS page per 34 alive contestants). The header line
   fills a bar until the next page, the line under it says what the page shows.
@@ -332,7 +332,7 @@ hides stock ids and the site host, and stops if any of them is still on the page
 
 `node status.mjs` prints deaths, breadth, trades and PnL per strategy from local files. `trades.jsonl` is the event
 log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick_say`, `auth_lost` (log in again),
-`blocked`, `revive`, `pump_skip`, `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
+`blocked`, `revive`, `pump_skip`, `cash_in` / `cash_out` (the Cx Bucks balance moved without an order, e.g. chat earnings: summed in `state.json` as deposits and left out of the gain since the start), `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
