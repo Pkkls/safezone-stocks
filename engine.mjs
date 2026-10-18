@@ -229,7 +229,7 @@ function pushStream() {
   // profit overlay: total PnL (realized + open) big in the header, green when positive (pg) or red (pr), detail in ps
   const cx = (x) => `${x >= 0 ? '+' : '-'}${(Math.abs(x) / 100).toFixed(2)}`, total = me.realized_pnl_cents + me.unrealized_pnl_cents;
   const P = { pg: total >= 0 ? `PROFIT ${cx(total)} Cx` : ' ', pr: total < 0 ? `PROFIT ${cx(total)} Cx` : ' ', ps: `realized ${cx(me.realized_pnl_cents)}   open ${cx(me.unrealized_pnl_cents)}` };
-  pipe?.stdin.write(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c, art: ARTS[i], ...P }).map(([k, v]) => `@@${k}\n${v}\n`.replace(/\n\n$/, '\n')).join('') + '@@end\n');
+  pipe?.stdin.write(`@@ticker\n${streamTicker(d)}\n` + Object.entries({ dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c, art: ARTS[i % ARTS.length], ...P }).map(([k, v]) => `@@${k}\n${v}\n`.replace(/\n\n$/, '\n')).join('') + '@@end\n');
 }
 
 // Entries, every 15 s, one order per scan. Top basket: hold the topN highest-priced live stocks, sell at rank topExit

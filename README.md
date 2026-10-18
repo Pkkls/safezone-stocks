@@ -78,9 +78,10 @@ after `END_AT`.
 
 ### Live stream (no browser)
 
-The engine pushes a text dashboard every 2 s over one long-lived ssh connection, rotating 5 pages every 20 s, plus a ticker line. ffmpeg frames
+The engine pushes a text dashboard every 2 s over one long-lived ssh connection, rotating its pages every 20 s (4, plus one STATUS page per 34 alive contestants), plus a ticker line. ffmpeg frames
 them with an ASCII "CX" banner, a blinking LIVE tag, a dancing ASCII mascot (`stream/dance1-4.txt`, 4 poses a second),
-one floating ASCII art per page under it (`stream/art1-5.txt`: money bag, candles, bull, skull, shield) and the
+one floating ASCII art per page under it (`stream/art1-5.txt`: money bag, candles, bull, skull, shield, in turn past
+page 5) and the
 scrolling ticker; `stream/run.sh` on a server has ffmpeg draw it
 (`drawtext`), encode it and send it to the RTMP(S) ingest, restarting after any drop. Measured on a 1 GB VPS: 7% of a
 core and 94 MB at 1280x720, 5 fps.
@@ -91,11 +92,13 @@ core and 94 MB at 1280x720, 5 fps.
 
 | Page | Shows |
 |---|---|
-| 1/5 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and % |
-| 2/5 ACTIVITY | last 14 orders (buy / sell), and per strategy: closed round trips, winners, PnL |
-| 3/5 MARKET | 8 biggest 5-min rises and falls, share of the market rising, the 18 most expensive stocks |
-| 4/5 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths with what killed them |
-| 5/5 STATUS | the 34 weakest alive contestants: HP bar, HP, sigil, and the S P D O L flags below |
+| 1 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and % |
+| 2 ACTIVITY | last 14 orders (buy / sell), and per strategy: closed round trips, winners, PnL |
+| 3 MARKET | 8 biggest 5-min rises and falls, share of the market rising, the 18 most expensive stocks |
+| 4 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths with what killed them |
+| 5 and on, STATUS | every alive contestant, weakest first, 34 per page (67 alive on 18/10 at 13:40 UTC: STATUS 1/2 and 2/2): HP bar, HP, sigil, and the S P D O L flags below |
+
+Pages are numbered over their current count (`6/6` with two STATUS pages).
 
 Colors (one drawtext layer each, aligned on the same character grid): **green** gain, buy, HP over 70%, live;
 **red** loss, sell, HP under 35%, death, poison, drone, outside the zone; **yellow** HP 35 to 70%, shield; **cyan**

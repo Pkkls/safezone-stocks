@@ -128,6 +128,18 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.doesNotMatch(Lay[0].g, /-1\.00/, 'control: a loss is never green');
   assert.match(plain[4], /5\/5 {2}STATUS[\s\S]*\nx +##-{8} +20 - +\.\.\.\.\.[\s\S]*\nz +#{9}- +90 healing +S\.\.\.L/, 'status: weakest first, hp bar, sigil, shield and live flags');
   assert.match(Lay[4].y, /S/, 'a shield is drawn in yellow');
+  // 70 alive: every one is on exactly one STATUS page (34 per page), the healthiest included (18/10: FloridaBoy, 110/110,
+  // was cut by the 34-weakest page); the page counter follows
+  {
+    const many = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`p${String(i).padStart(2, '0')}`, { alive: true, hp: i + 1, max: 110, out: false }]));
+    const pg = streamPages({ me, health: { ...many, gone: { alive: false, hp: 0, max: 100 } } }).map((p) => p.replace(/\x01.|\x02/g, ''));
+    assert.strictEqual(pg.length, 7, '4 pages + 3 STATUS pages for 70 alive');
+    assert.match(pg[6], /^7\/7 {2}STATUS 3\/3 \(weakest first, 70 alive\)/, 'status pages numbered');
+    for (const n of Object.keys(many)) assert.strictEqual(pg.slice(4).filter((p) => new RegExp(`\\n${n} `).test(p) || new RegExp(` ${n} `).test(p)).length, 1, `${n} on exactly one status page`);
+    assert.match(pg[6], /p69 +#{6}-{4} +70/, 'the healthiest (70/110) is on the last status page');
+    assert.ok(!pg.slice(4).some((p) => /gone/.test(p)), 'control: a dead contestant is on no status page');
+    for (const p of pg) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 96), 'status page fits 96 x 22'); }
+  }
   assert.match(plain[0], /^1\/5 {2}PORTFOLIO[\s\S]*Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Alive 2 {3}Bot up 3h05/);
   assert.match(P[0], /\nBig +crash +20\.00 +25\.00 +\+5\.00 +\+25\.0%\nSmall +yours/, 'highest value first; control: a position the engine did not open is yours');
   assert.match(P[1], /04:29 {2}buy {3}Big[\s\S]*top +3 +2 +\+15\.00/, 'orders and strategy PnL');

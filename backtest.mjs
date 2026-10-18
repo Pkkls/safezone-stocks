@@ -79,7 +79,10 @@ export function streamPages(d) {
   const { me, names = {}, health = {}, roster = {}, breadth = 0, startedAt = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {} } = d;
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
   const gr = (v, x) => col(v >= 0 ? 'g' : 'r', x), hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
-  const up = Math.floor((now - startedAt) / 60e3), alive = Object.values(health).filter((h) => h.alive).length, N = 5;
+  // every alive contestant gets a status line, 34 per page: 18/10 the page kept only the 34 weakest of 67 alive, so a
+  // healthy one (FloridaBoy, 110/110) never showed. One STATUS page per 34, weakest first across them.
+  const PER = 34, aliveN = Object.values(health).filter((h) => h.alive).length, statusN = Math.max(1, Math.ceil(aliveN / PER));
+  const up = Math.floor((now - startedAt) / 60e3), alive = aliveN, N = 4 + statusN;
   const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => { const l = a[i] || ''; return (l + ' '.repeat(Math.max(0, 50 - vis(l).length)) + (b[i] || '')).trimEnd(); });
   const page = (i, title, body) => [col('c', `${i}/${N}  ${title}`.padEnd(75)) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
     `Realized ${gr(me.realized_pnl_cents, s(me.realized_pnl_cents) + ' Cx')}   Open ${gr(me.unrealized_pnl_cents, s(me.unrealized_pnl_cents) + ' Cx')}   Positions ${me.holdings.length}   Alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
@@ -106,14 +109,17 @@ export function streamPages(d) {
   const dead = [col('c', 'LAST DEATHS (UTC)')];
   for (const x of deaths.slice(-18).reverse()) dead.push(`${hm(x.t)}  ${pad(x.u, 22)} ${col('r', pad(x.source || x.cause || '', 14))}`);
   // status: the alive contestants, weakest first, two per line: hp bar, sigil (class), shield, poison, drone, out, live
-  const st = Object.entries(health).filter(([, h]) => h.alive).sort((a, b) => a[1].hp / a[1].max - b[1].hp / b[1].max).slice(0, 34).map(([u, h]) => {
+  const st = Object.entries(health).filter(([, h]) => h.alive).sort((a, b) => a[1].hp / a[1].max - b[1].hp / b[1].max || a[0].localeCompare(b[0])).map(([u, h]) => {
     const r = roster[u] || {}, flag = (on, k, ch) => (on ? col(k, ch) : '.');
     return `${pad(u, 13)} ${bar(h)} ${String(h.hp).padStart(3)} ${pad(r.sigil || '-', 10)} ${flag(h.shield, 'y', 'S')}${flag(h.poison, 'r', 'P')}${flag(h.drone, 'r', 'D')}${flag(h.out, 'r', 'O')}${flag(r.live, 'g', 'L')}`;
   });
   const head = col('c', 'NAME          HP BAR      HP SIGIL      SPDOL');
-  const status = two([head, ...st.slice(0, 17)], [head, ...st.slice(17)]);
-  status.push(col('c', 'S') + ' shield (armor)  ' + col('c', 'P') + ' poisoned  ' + col('c', 'D') + ' drone incoming  ' + col('c', 'O') + ' outside the zone  ' + col('c', 'L') + ' live on Kick');
-  return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead)), page(5, 'STATUS (weakest first)', status)];
+  const legend = col('c', 'S') + ' shield (armor)  ' + col('c', 'P') + ' poisoned  ' + col('c', 'D') + ' drone incoming  ' + col('c', 'O') + ' outside the zone  ' + col('c', 'L') + ' live on Kick';
+  const status = Array.from({ length: statusN }, (_, k) => {
+    const part = st.slice(k * PER, (k + 1) * PER);
+    return page(5 + k, `STATUS${statusN > 1 ? ` ${k + 1}/${statusN}` : ''} (weakest first, ${aliveN} alive)`, [...two([head, ...part.slice(0, 17)], [head, ...part.slice(17)]), legend]);
+  });
+  return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead)), ...status];
 }
 
 // Scrolling ticker line for the stream (same d as streamPages): PnL, top movers, last orders, alive count. ASCII only.
