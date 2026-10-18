@@ -223,6 +223,7 @@ reopened by a fresh process gets its cookie back). Stopping the task stops both.
 | `crash_on`, `surv_on`, `top_on` | the re-tuning switched it back on |
 | `hp_feed` | the map's health feed appeared or went silent (frame headers, for diagnosis) |
 | `tune`, `tune_crash`, `tune_surv`, `tune_top` | parameter re-tuning result per strategy |
+| `params_reload` | an edit to `params.json` was picked up without a restart |
 
 - Telegram, if configured: lost session, long API block, strategy switched off, new parameters, daily PnL.
 
