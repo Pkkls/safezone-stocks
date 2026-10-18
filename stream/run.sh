@@ -15,8 +15,12 @@ for i in 1 2 3 4; do
 done
 VF="drawtext=$T:textfile=banner.txt:fontsize=16:fontcolor=0x39d0ff:line_spacing=0:x=40:y=12"
 VF="$VF,drawtext=fontfile=$B:expansion=none:text=SAFEZONE STOCK BOT:fontsize=30:fontcolor=0xe6edf3:x=230:y=16"
-VF="$VF,drawtext=$T:text=play money  -  automated trading  -  powered by CX:fontsize=16:fontcolor=0x7d8590:x=232:y=56"
+VF="$VF,drawtext=$T:text=play money  -  automated trading  -  CX:fontsize=16:fontcolor=0x7d8590:x=232:y=56"
 VF="$VF,drawtext=fontfile=$B:expansion=none:text=LIVE:fontsize=22:fontcolor=0xff5c5c:x=w-110:y=22:enable='lt(mod(t\,1)\,0.6)'"
+# profit overlay: total PnL big and pulsing (green pg.txt / red pr.txt, one of them blank), realized/open under it
+PG="fontfile=$B:expansion=none:reload=1:fontsize=34:x=720:y=12:alpha='0.8+0.2*sin(t*3)'"
+VF="$VF,drawtext=$PG:textfile=pg.txt:fontcolor=0x3fb950,drawtext=$PG:textfile=pr.txt:fontcolor=0xff6b6b"
+VF="$VF,drawtext=$T:textfile=ps.txt:reload=1:fontsize=15:fontcolor=0x9da7b3:x=724:y=60"
 VF="$VF,drawbox=x=0:y=96:w=iw:h=2:color=0x39d0ff@0.5:t=fill"
 PAGE=":reload=1:fontsize=17:line_spacing=6:x=40:y=112"
 VF="$VF,drawtext=$T:textfile=dash.txt:fontcolor=0xe6edf3$PAGE"
@@ -31,7 +35,7 @@ VF="$VF,drawtext=$T:textfile=ticker.txt:reload=1:fontsize=20:fontcolor=0x3fb950:
 while :; do
   if [ -s url ] && [ -s dash.txt ]; then
     [ -s ticker.txt ] || echo "CX STOCK BOT" > ticker.txt
-    for f in g r y c art; do [ -s $f.txt ] || echo " " > $f.txt; done
+    for f in g r y c art pg pr ps; do [ -s $f.txt ] || echo " " > $f.txt; done
     ffmpeg -nostdin -loglevel error -re -f lavfi -i color=c=0x0b0e14:s=1280x720:r=8 -f lavfi -i anullsrc=r=44100:cl=stereo \
       -vf "$VF" -c:v libx264 -preset ultrafast -tune stillimage -pix_fmt yuv420p -g 16 -b:v 600k -maxrate 600k -bufsize 1200k \
       -c:a aac -b:a 64k -f flv "$(cat url)" 2>>err.log
