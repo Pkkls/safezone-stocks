@@ -86,7 +86,9 @@ core and 94 MB at 1280x720, 5 fps.
    `~/szdash/url` (`chmod 600`), run `nohup sh ~/szdash/run.sh >/dev/null 2>&1 &` and add it as a crontab `@reboot`.
 2. PC: `STREAM_SSH` (ssh host alias) in `.env`, plus `STREAM_SSH_BIN` if `ssh` is not on PATH. Restart the engine.
 
-A frozen "data HH:MM:SS UTC" on the stream means the PC stopped pushing.
+A frozen "data HH:MM:SS UTC" on the stream means the PC stopped pushing. `stream/check.sh <env file with TG_TOKEN and
+TG_CHAT>`, run every 5 min from cron on the server, sends one Telegram message when the text is over 5 min old (engine
+down, session lost or PC off) or ffmpeg is down, and one when it is back.
 
 ## Monitoring
 
@@ -108,4 +110,4 @@ decoder, chat and stream text, cookie sorter, each with a control case that must
 
 `engine.mjs` the engine and supervisor · `backtest.mjs` replays, tuning, decoders, text · `check.mjs` self-check ·
 `status.mjs` status · `import-cookies.mjs` cookie import · `kick_say.py` chat line (Python: Kick blocks Node's TLS
-fingerprint) · `stream/run.sh` stream · `scripts/register-task.ps1` scheduled task · `.env.example` configuration.
+fingerprint) · `stream/run.sh` stream · `stream/check.sh` stream alert · `scripts/register-task.ps1` scheduled task · `.env.example` configuration.
