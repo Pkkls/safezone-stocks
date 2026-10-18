@@ -58,7 +58,7 @@ export function streamPages(d) {
   const hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
   const up = Math.floor((now - startedAt) / 60e3), alive = Object.values(health).filter((h) => h.alive).length;
   const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => ((a[i] || '').padEnd(50) + (b[i] || '')).trimEnd());
-  const page = (i, title, body) => [`SAFEZONE STOCK BOT   play money, automated trading   ${i}/4 ${title}`.padEnd(75) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
+  const page = (i, title, body) => [`${i}/4  ${title}`.padEnd(75) + `data ${new Date(now).toISOString().slice(11, 19)} UTC`,
     `Realized ${s(me.realized_pnl_cents)} Cx   Open ${s(me.unrealized_pnl_cents)} Cx   Positions ${me.holdings.length}   Alive ${alive}   Bot up ${Math.floor(up / 60)}h${String(up % 60).padStart(2, '0')}`,
     '', ...body.slice(0, 19)].join('\n') + '\n';
 
@@ -81,6 +81,18 @@ export function streamPages(d) {
   const dead = ['LAST DEATHS (UTC)'];
   for (const x of deaths.slice(-18).reverse()) dead.push(`${hm(x.t)}  ${pad(x.u, 22)} ${pad(x.source || x.cause || '', 14)}`);
   return [page(1, 'PORTFOLIO', pos), page(2, 'ACTIVITY', two(orders, strat)), page(3, 'MARKET', two(market, rank)), page(4, 'CONTESTANTS', two(danger, dead))];
+}
+
+// Scrolling ticker line for the stream (same d as streamPages): PnL, top movers, last orders, alive count. ASCII only.
+export function streamTicker(d) {
+  const { me, names = {}, health = {}, movers = [] } = d;
+  const c = (x) => (x / 100).toFixed(2), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`, mv = [...movers].sort((a, b) => b.ret - a.ret);
+  const part = (label, v) => (v.length ? `${label}  ${v.join('   ')}` : '');
+  return ['CX STOCK BOT', `REALIZED ${me.realized_pnl_cents >= 0 ? '+' : ''}${c(me.realized_pnl_cents)} Cx`,
+    part('RISING', mv.filter((m) => m.ret > 0).slice(0, 5).map((m) => `${m.name} ${pct(m.ret)}`)),
+    part('FALLING', [...mv].reverse().filter((m) => m.ret < 0).slice(0, 5).map((m) => `${m.name} ${pct(m.ret)}`)),
+    part('LAST ORDERS', (me.trades || []).slice(0, 4).map((t) => `${t.occurred_at.slice(11, 16)} ${t.side} ${names[t.external_id] || '?'} ${c(t.cash_cents)} Cx`)),
+    `ALIVE ${Object.values(health).filter((h) => h.alive).length}`, 'play money, automated'].filter(Boolean).join('     |     ').replace(/[^\x20-\x7e]/g, '');
 }
 
 // Round trips per strategy (buy reason prefix) over trades.jsonl lines: matched buy -> next sell of the same name.

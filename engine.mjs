@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamPages, roundTrips } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, streamPages, streamTicker, roundTrips } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -204,14 +204,16 @@ async function guard() {
     if (why) await sellOwn(h, why);
   }
   save();
-  // stream: the text dashboard pushed every 10 s to STREAM_SSH, drawn and streamed there by stream/run.sh
+  // stream: every 10 s, the ticker line then the current page (a new one every 20 s) to STREAM_SSH, split there into
+  // ticker.txt and dash.txt (each replaced whole), drawn and streamed by stream/run.sh
   if (me && process.env.STREAM_SSH && Date.now() - lastStream >= 10e3) {
     lastStream = Date.now();
-    const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, 'cat > szdash/dash.tmp && mv szdash/dash.tmp szdash/dash.txt'], { stdio: ['pipe', 'ignore', 'ignore'] });
+    const split = 'cd szdash && cat > push.tmp && head -n 1 push.tmp > ticker.tmp && tail -n +2 push.tmp > dash.tmp && mv ticker.tmp ticker.txt && mv dash.tmp dash.txt';
+    const c = spawn(process.env.STREAM_SSH_BIN || 'ssh', [process.env.STREAM_SSH, split], { stdio: ['pipe', 'ignore', 'ignore'] });
     c.on('error', (e) => log({ ev: 'stream_err', msg: e.message }));
-    const pages = streamPages({ me, names, health, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
-      strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) });
-    c.stdin.end(pages[Math.floor(Date.now() / 20e3) % pages.length]); // a new page every 20 s
+    const d = { me, names, health, breadth: lastBreadth, startedAt: STARTED, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
+      strategies: roundTrips(fs.readFileSync(LOG, 'utf8').split('\n'), ['top', 'crash', 'surv', 'dip']) }, pages = streamPages(d);
+    c.stdin.end(streamTicker(d) + '\n' + pages[Math.floor(Date.now() / 20e3) % pages.length]);
   }
 }
 

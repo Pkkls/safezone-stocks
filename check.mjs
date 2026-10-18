@@ -1,6 +1,6 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamPages, roundTrips } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, streamPages, streamTicker, roundTrips } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -118,13 +118,17 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     strategies: { top: { n: 3, win: 2, pnl: 1500 } } });
   assert.strictEqual(P.length, 4);
   for (const p of P) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 96), 'page fits 96 x 22: ' + l[0]); }
-  assert.match(P[0], /1\/4 PORTFOLIO[\s\S]*Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Alive 2 {3}Bot up 3h05/);
+  assert.match(P[0], /^1\/4 {2}PORTFOLIO[\s\S]*Realized \+505\.80 Cx {3}Open -1\.20 Cx {3}Positions 2 {3}Alive 2 {3}Bot up 3h05/);
   assert.match(P[0], /\nBig +crash +20\.00 +25\.00 +\+5\.00 +\+25\.0%\nSmall +yours/, 'highest value first; control: a position the engine did not open is yours');
   assert.match(P[1], /04:29 {2}buy {3}Big[\s\S]*top +3 +2 +\+15\.00/, 'orders and strategy PnL');
   assert.match(P[2], /RISING[^\n]*\nUp +\+20\.0%[^\n]*\n[^\n]*\nFALLING 5 MIN\nDown +-10\.0%/, 'control: a fall is never listed as rising');
   assert.match(P[2], /1\. Top +90\.00/);
   assert.match(P[3], /IN DANGER[^\n]*\nx +20\/100[^\n]*newest +knife/, 'low hp listed (z at 90 hp is not), deaths newest first with their source');
   assert.doesNotMatch(P[3], /\nz /, 'control: a healthy contestant is not in danger');
+  const tick = streamTicker({ me, names: { b: 'Big' }, health: { x: { alive: true }, y: { alive: false } }, movers: [{ name: 'Up', ret: 0.2 }, { name: 'Down', ret: -0.1 }] });
+  assert.match(tick, /^CX STOCK BOT +\| +REALIZED \+505\.80 Cx +\| +RISING {2}Up \+20\.0% +\| +FALLING {2}Down -10\.0% +\| +LAST ORDERS {2}04:29 buy Big 20\.00 Cx +\| +ALIVE 1 /);
+  assert.ok(!tick.includes('\n') && /^[\x20-\x7e]+$/.test(tick), 'one printable ASCII line');
+  assert.doesNotMatch(streamTicker({ me, movers: [{ name: 'Up', ret: 0.2 }] }), /FALLING/, 'control: no falling section without a fall');
 }
 // round trips per strategy, matched buy -> next sell of the same name; unknown prefixes ignored
 {
