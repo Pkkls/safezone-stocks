@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner, trimPick } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -282,5 +282,17 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.match(B.g, /BUY/); assert.match(B.r, /SELL/); assert.doesNotMatch(B.g, /SELL/, 'control: a sale is never green');
   assert.ok(new Set([B.w, B.g, B.r, B.y, B.c].map((l) => l.length)).size === 1 && [B.g, B.r].every((l) => l.endsWith('|')), 'same width, same end mark');
   assert.match(bigBanner([], names, now).w, /^no trade of 100 Cx or more in the last hour +\|$/);
+}
+{ // basket trim: cash under half the reserve sells part of the biggest position, back up to the reserve
+  const pos = [{ id: 'knut', value: 60000 }, { id: 'small', value: 5000 }];
+  assert.deepStrictEqual(trimPick(pos, 3000, 250000, 0.3), { id: 'knut', amt: 15000 }, '19/10: 30 Cx cash of 2,500 Cx, a quarter of the biggest');
+  assert.deepStrictEqual(trimPick(pos, 30000, 250000, 0.3), { id: 'knut', amt: 15000 }, 'at 12% cash: still capped by the quarter');
+  assert.deepStrictEqual(trimPick(pos, 35000, 240000, 0.3), { id: 'knut', amt: 15000 }, 'just under 15%');
+  assert.strictEqual(trimPick(pos, 37500, 250000, 0.3), null, 'at 15% cash: nothing to sell');
+  assert.deepStrictEqual(trimPick([{ id: 'a', value: 900000 }], 35000, 250000, 0.3), { id: 'a', amt: 40000 }, 'no more than back to 30%');
+  assert.strictEqual(trimPick([], 0, 250000, 0.3), null);
+  assert.strictEqual(trimPick(pos, 36000, 240000, 0.3), null, 'control: exactly 15% cash sells nothing');
+  assert.deepStrictEqual(trimPick(pos, 43500, 250000, 0.3, true), { id: 'knut', amt: 15000 }, 'a running trim goes on above 15%');
+  assert.strictEqual(trimPick(pos, 75000, 250000, 0.3, true), null, 'and stops at 30%');
 }
 console.log('check ok');

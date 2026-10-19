@@ -71,6 +71,14 @@ export function manualFlows(trades, engineIds, since) {
 }
 // More shares held than the engine bought: the rest was bought by hand, and the engine takes it over.
 export const adopts = (held, mine) => BigInt(held || 0) > BigInt(mine || 0);
+// Basket trim: from cash under half of keep x total (or `on`, a trim already running) until it is back at keep x total,
+// the biggest position sells up to a quarter of itself. pos: [{ id, value }] in cents. Returns { id, amt } or null.
+export function trimPick(pos, cash, total, keep, on = false) {
+  if (cash >= (on ? keep : keep / 2) * total) return null;
+  const p = pos.reduce((m, x) => (x.value > (m?.value ?? -1) ? x : m), null);
+  const amt = p && Math.floor(Math.min(keep * total - cash, p.value / 4));
+  return amt >= 1000 ? { id: p.id, amt } : null;
+}
 // Basket fill, once every top slot is held: the smallest position gets min(size x cash, its pool cap), never taking
 // cash under keep x total value. pos: [{ id, value, cap }] in cents. Returns { id, amt } or null.
 export function fillPick(pos, cash, total, keep, size) {

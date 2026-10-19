@@ -42,8 +42,12 @@ Positions every 2 s (exits at death or low HP within about 2 s of the map showin
   of many settings on a small sample overfits: the kill switches are the safety net. `params.json` is hot-reloaded.
   `"topForce": true` there keeps the top basket on: self-tuning and its kill switch no longer change it (set on
   2026-10-19 to put idle cash to work, while the 24 h replay had it at -59 to -166 Cx and the last 12 h at +180 to +270).
-  `"topKeep": 0.1` (set the same day): once every basket slot is held, cash above 10% of the total value goes into the
-  smallest healthy basket position, `topfill` in the log, one order per scan. Measured before: on 19/10 every stock live
+  `"topKeep": 0.3` (set the same day, 0.1 at first) is the share of the total value kept in cash for the active
+  strategies (`crash`, `surv`): once every basket slot is held, cash above it goes into the smallest healthy basket
+  position (`topfill` in the log); under half of it, the biggest basket position sells up to a quarter of itself per
+  scan until cash is back to it (`toptrim`; `state.trimOn` carries a running trim across restarts). One order per scan.
+  Set to 0.3 after a hand buy left 30 Cx of cash and the engine stopped trading: since 18/10 20:00 UTC `crash`
+  had made +79.58 Cx over 20 round trips and `surv` +81.10 Cx over 2. Measured before: on 19/10 every stock live
   24 h earlier, dead ones sold 2 min after their death, gained 16% on average (+19% over 12 h, +9% over 6 h), and the
   survivors' prices rose a median 4.6% in the 30 min after each of the 44 deaths.
 - **Supervisor**: the scheduled task runs a parent process that restarts the engine if it crashes or hangs (no
@@ -349,7 +353,7 @@ log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter and fill (smallest position first, cash reserve kept), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, fill (smallest position first, cash reserve kept) and trim (biggest position, a quarter at most, from half the reserve back to all of it), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules

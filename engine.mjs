@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner, trimPick } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -36,7 +36,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // reserve. Crash: drop between two scans, max rise before, hold. Run mode: start and trail. Survivors and top basket:
 // count, hold or exit rank, rebalance period, size, calm window (entry ranks by the lowest price over it: no pump). survTop/topN 0 = off.
 // topForce: the operator keeps the top basket on; retune and the kill switch no longer touch topN.
-// topKeep: once the basket is full, cash above this share of the total value tops up its smallest position (1 = off).
+// topKeep: the share of the total value kept in cash for the active strategies: above it, a full basket tops up its
+// smallest position; under half of it, the biggest basket position is trimmed back up to it (1 = off).
 const DEFAULTS = { size: 0.25, maxImpact: 0.015, crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
   survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3, topForce: false, topKeep: 1 };
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
@@ -148,7 +149,10 @@ async function trade(side, h, payload, why) {
   log({ ev: side, name: h.name, why, status: r.s, res: r.j });
   if (r.j?.balance_after_cents != null) { lastCash = r.j.balance_after_cents; orderSeq++; }
   if (r.j?.trade_id) engineIds.add(r.j.trade_id);
-  if (r.s === 200 && r.j?.shares) { if (side.endsWith('buy')) state.shares[id] = String(BigInt(state.shares[id] || 0) + BigInt(r.j.shares)); else delete state.shares[id]; }
+  if (r.s === 200 && r.j?.shares) {
+    const left = BigInt(state.shares[id] || 0) + (side.endsWith('buy') ? 1n : -1n) * BigInt(r.j.shares); // a trim sells part
+    if (left > 0n) state.shares[id] = String(left); else delete state.shares[id];
+  }
   if (r.s === 200 && process.env.KICK_BEARER) say(h.name, sayText(side, h.name, r.j?.cash_cents ?? 0, fs.readFileSync(LOG, 'utf8').split('\n')));
   return r;
 }
@@ -198,6 +202,7 @@ function trialOn(prefix) {
 // and survivor buys sell on time unless in run mode (peak >= runStart x entry: runTrail trail, RUN_HOLD cap); the top
 // basket sells on rank (scan). All: status, death, hp, elimination. /me 500s: last holdings, repriced one by one.
 let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastBreadth = 0, names = {}, movers = [], ranking = [], basket = [], pumps = [];
+const trimAt = {}; // a trim's /me can lag: no adopt of the shares just sold
 const lastPrice = {}, status = {}, eliminated = {}, lastTradeAt = {}, STARTED = Date.now();
 async function guard() {
   const r = await api('stock-market/me');
@@ -224,7 +229,7 @@ async function guard() {
     const p = h.last_price_cents, id = h.external_id, gone = dead(h.name, state.entryAt[id] ? state.entryAt[id] - 60e3 : Date.now() - 10 * 60e3) || hpOf(h.name)?.alive === false;
     const common = status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}` : gone ? `died ${p}`
       : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}` : eliminated[id] ? `eliminated ${p}` : null;
-    if (adopts(h.shares, state.shares[id]) && !(state.exitedAt[id] > Date.now() - 60e3)) { // a buy by hand joins the pool
+    if (adopts(h.shares, state.shares[id]) && !(state.exitedAt[id] > Date.now() - 60e3) && !(trimAt[id] > Date.now() - 60e3)) { // a buy by hand joins the pool
       state.shares[id] = String(h.shares); state.kind[id] ||= 'top'; state.entryAt[id] ||= Date.now(); state.peak[id] ||= p;
       log({ ev: 'adopt', name: h.name, shares: state.shares[id] });
     }
@@ -361,8 +366,19 @@ async function scan() {
       pumpSeen[x.external_id] = now; pumps.push({ t: now, name: x.name, ratio: x.last_price_cents / calm(x) }); if (pumps.length > 20) pumps.shift();
       log({ ev: 'pump_skip', name: x.name, ratio: +(x.last_price_cents / calm(x)).toFixed(2) });
     }
+    // cash for the active strategies (crash, surv): under half of topKeep, sell up to a quarter of the biggest basket
+    // position, back up to topKeep (19/10: kil bought with the last cash by hand and the engine stopped trading)
+    const total = (lastCash ?? 0) + me.portfolio_value_cents, val = (h) => Number(h.shares) / 1e6 * h.last_price_cents;
+    const tops = me.holdings.filter((h) => state.kind[h.external_id] === 'top').map((h) => ({ h, id: h.external_id, value: val(h) }));
+    const tr = lastCash != null && P.topKeep < 1 && trimPick(tops, lastCash, total, P.topKeep, state.trimOn), y = tr && tops.find((p) => p.id === tr.id);
+    state.trimOn = !!tr; // a trim runs from half the cash reserve back up to all of it, across restarts
+    if (y) {
+      const sh = BigInt(y.h.shares) * BigInt(tr.amt) / BigInt(Math.ceil(y.value)); trimAt[y.id] = now;
+      const t = await trade('stock-market/sell', y.h, { shares: String(sh) }, `toptrim ${Math.round(tr.amt / 100)} of ${Math.round(y.value / 100)} Cx @${y.h.last_price_cents}`);
+      if (t?.s === 200) return (y.h.shares = String(BigInt(y.h.shares) - sh)); // until the next /me
+    }
     if (s && (P.topForce || trialOn('top'))) {
-      const c = await cash(), amt = Math.min(Math.floor(c * P.topSize), sizeCap(s.last_price_cents));
+      const c = await cash(), amt = Math.min(Math.floor(c * P.topSize), sizeCap(s.last_price_cents), P.topKeep < 1 ? Math.floor(c - P.topKeep * total) : Infinity);
       const t = amt >= MIN_BUY && amt <= c && await buy(s, amt, `top #${rank.get(s.external_id) + 1} @${s.last_price_cents}`, 'top');
       if (t?.s === 200) return me.holdings.push({ external_id: s.external_id, name: s.name, shares: t.j.shares, last_price_cents: s.last_price_cents }); // until the next /me
     } else if (!s && P.topKeep < 1 && lastCash != null && (P.topForce || trialOn('top'))) {
