@@ -23,7 +23,7 @@ Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one orde
 
 | Strategy | Buys | Sells |
 |---|---|---|
-| `top` | the 10 highest-priced live contestants (traded in the last 30 min), ranked on their lowest price of now, 2.5 and 5 min ago (`topCalm`: a pump never ranks), 15% of cash each, one buy per scan | rank 20 or worse at the hourly check |
+| `top` | the `topN` highest-priced live contestants (10 by default, 14 since 2026-10-19) (traded in the last 30 min), ranked on their lowest price of now, 2.5 and 5 min ago (`topCalm`: a pump never ranks), 15% of cash each, one buy per scan | rank `topExit` or worse at the hourly check (20, 28 since 2026-10-19) |
 | `surv` | 20 s after a new death, the 2 highest-priced live contestants (at most 2 open) | after 30 min |
 | `crash` | a drop of 25%+ between two scans with no pump in the 3 min before (logged as kind `dip`) | after 10 min |
 
