@@ -40,6 +40,8 @@ Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one orde
   exactly as traded and a new one is adopted only with 8+ trades, a profit in both halves of the window and a clear
   margin; a losing strategy with no winning setting is switched off, and back on when one wins again. Picking the best
   of many settings on a small sample overfits: the kill switches are the safety net. `params.json` is hot-reloaded.
+  `"topForce": true` there keeps the top basket on: self-tuning and its kill switch no longer change it (set on
+  2026-10-19 to put idle cash to work, while the 24 h replay had it at -59 to -166 Cx and the last 12 h at +180 to +270).
 - **Supervisor**: the scheduled task runs a parent process that restarts the engine if it crashes or hangs (no
   successful call for 5 min, or a session lost for 3 min).
 

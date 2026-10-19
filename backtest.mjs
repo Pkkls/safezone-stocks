@@ -63,6 +63,14 @@ export function decodeHealth(frames) {
 const col = (k, x) => `\x01${k}${x}\x02`, vis = (x) => x.replace(/\x01.|\x02/g, '');
 export const LAYERS = ['w', 'g', 'r', 'y', 'c'];
 export const START_CASH = 60746; // balance before the first order on 17/10 (45560 after a 15186 buy)
+// Last known balance in the trade log: an order's balance_after_cents or a cash_in/cash_out balance, whichever is later
+// (19/10: reading orders only made a restart count a deposit twice).
+export function lastBalance(lines) {
+  const l = lines.findLast((x) => x.includes('"balance_after_cents"') || /"ev":"cash_(in|out)"/.test(x));
+  if (!l) return null;
+  const e = JSON.parse(l);
+  return e.res?.balance_after_cents ?? e.balance ?? null;
+}
 export function layers(text, anchor = 150) {
   const out = Object.fromEntries(LAYERS.map((k) => [k, '']));
   let cur = 'w';

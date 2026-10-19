@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -221,5 +221,13 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.deepStrictEqual(swallowed(lines), [], 'a loop( after a // comment is never scheduled');
   assert.strictEqual(swallowed(['loop(a, 1); // x loop(b, 2);']).length, 1, 'control: the 18/10 line is caught');
   for (const fn of ['guard', 'scan', 'readMap', 'pushStream', 'record', 'retune', 'daily', 'reloadParams']) assert.ok(lines.some((l) => new RegExp(`^loop\\(${fn},`).test(l)), `${fn} is scheduled`);
+}
+{ // the balance a restart starts from: a later cash_in beats the last order, so a deposit is not counted twice
+  const order = JSON.stringify({ ev: 'stock-market/sell', status: 200, res: { balance_after_cents: 72282 } }), dep = JSON.stringify({ ev: 'cash_in', cents: 30000, balance: 102282 });
+  assert.strictEqual(lastBalance([order, dep, '{"ev":"scan"}']), 102282);
+  assert.strictEqual(lastBalance([dep, order]), 72282, 'an order after the deposit wins');
+  assert.strictEqual(lastBalance(['{"ev":"scan"}']), null);
+  const old = (lines) => { const l = lines.findLast((x) => x.includes('"balance_after_cents"')); return l ? JSON.parse(l).res.balance_after_cents : null; };
+  assert.notStrictEqual(old([order, dep]), 102282, 'control: the 19/10 orders-only read misses the deposit');
 }
 console.log('check ok');

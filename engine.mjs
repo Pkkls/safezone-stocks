@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -35,8 +35,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Params, self-tuned by retune() (params.json, hot-reloaded). size/maxImpact: share of cash / cap as share of the pool
 // reserve. Crash: drop between two scans, max rise before, hold. Run mode: start and trail. Survivors and top basket:
 // count, hold or exit rank, rebalance period, size, calm window (entry ranks by the lowest price over it: no pump). survTop/topN 0 = off.
+// topForce: the operator keeps the top basket on; retune and the kill switch no longer touch topN.
 const DEFAULTS = { size: 0.25, maxImpact: 0.015, dumpExit: true, crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
-  survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3 };
+  survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3, topForce: false };
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
 const MIN_BUY = 1000, MAX_POS = 6, COOLDOWN = 30 * 60e3, CRASH_COOLDOWN = 5 * 60e3, TRIAL = 10, SURV_DELAY = 20e3;
 const RUN_HOLD = 120 * 60e3, MANUAL_TRAIL = 0.85, HP_MIN = 0.4, HP_EXIT = 0.25, R0 = 1e6;
@@ -242,7 +243,7 @@ async function guard() {
 // Dashboard feed: what only this process knows, rewritten every guard tick (live.json, write-then-rename), plus one total
 // value point a minute (data/equity.jsonl). /me has no cash field: cash = balance after the latest order, seeded from the log.
 let lastMarket = null, lastEquity = 0;
-let lastCash = (() => { const l = fs.readFileSync(LOG, 'utf8').split('\n').findLast((x) => x.includes('"balance_after_cents"')); return l ? JSON.parse(l).res.balance_after_cents : null; })();
+let lastCash = lastBalance(fs.readFileSync(LOG, 'utf8').split('\n'));
 function writeLive() {
   const entry = {};
   for (const h of me?.holdings || []) if (state.entryAt[h.external_id]) entry[h.external_id] = entryPx(h);
@@ -353,7 +354,7 @@ async function scan() {
       pumpSeen[x.external_id] = now; pumps.push({ t: now, name: x.name, ratio: x.last_price_cents / calm(x) }); if (pumps.length > 20) pumps.shift();
       log({ ev: 'pump_skip', name: x.name, ratio: +(x.last_price_cents / calm(x)).toFixed(2) });
     }
-    if (s && trialOn('top')) {
+    if (s && (P.topForce || trialOn('top'))) {
       const c = await cash(), amt = Math.min(Math.floor(c * P.topSize), sizeCap(s.last_price_cents));
       const t = amt >= MIN_BUY && amt <= c && await buy(s, amt, `top #${rank.get(s.external_id) + 1} @${s.last_price_cents}`, 'top');
       if (t?.s === 200) return me.holdings.push({ external_id: s.external_id, name: s.name, shares: t.j.shares, last_price_cents: s.last_price_cents }); // until the next /me
@@ -412,6 +413,7 @@ async function retune() {
   const deaths = [...new Map(fs.readFileSync('data/deaths.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).map((d) => [d.u + d.t, d])).values()].sort((a, b) => a.t - b.t);
   const c = tuneCrash(tape, P), lower = Object.fromEntries(Object.entries(names).map(([id, n]) => [id, n.toLowerCase()]));
   const sv = tuneSurv(tape, { ...P, runStart: c.adopt?.runStart ?? P.runStart, runTrail: c.adopt?.runTrail ?? P.runTrail }, deaths, lower), tp = tuneTop(tape, P);
+  if (P.topForce) tp.adopt = null;
   for (const [ev, x] of [['tune_crash', c], ['tune_surv', sv], ['tune_top', tp]]) log({ ev, cur: x.cur, best: x.best && { ...x.best.r, Q: x.best.Q }, adopt: x.adopt });
   for (const [prefix, r] of [['crash', c.adopt ? c.best.r : c.cur], ['surv', sv.adopt?.survTop ? sv.best.r : sv.cur], ['top', tp.adopt?.topN ? tp.best.r : tp.cur]]) {
     if (trialOn(prefix) || !r || r.n < 8 || r.h1 <= 0 || r.h2 <= 0) continue;
