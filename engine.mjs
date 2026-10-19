@@ -43,7 +43,7 @@ const DEFAULTS = { size: 0.25, maxImpact: 0.015, crashDrop: 0.25, crashFlat: 0.1
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
 const MIN_BUY = 1000, MAX_POS = 6, COOLDOWN = 30 * 60e3, CRASH_COOLDOWN = 5 * 60e3, TRIAL = 10, SURV_DELAY = 20e3;
 // HP_FALL: a held stock is also sold once its contestant lost that share of max HP within a minute and is under HP_FALL_UNDER
-const RUN_HOLD = 120 * 60e3, HP_MIN = 0.4, HP_EXIT = 0.25, HP_FALL = 0.2, HP_FALL_UNDER = 0.6, R0 = 1e6;
+const RUN_HOLD = 120 * 60e3, HP_MIN = 0.4, HP_EXIT = 0.25, HP_FALL = 0.15, HP_FALL_UNDER = 0.7, R0 = 1e6;
 const sizeCap = (price) => Math.floor(R0 * Math.sqrt(price / 1000) * P.maxImpact); // own impact ~ size / pool reserve
 const state = { peak: {}, exitedAt: {}, entryAt: {}, kind: {}, shares: {}, ...readJson(STATE) };
 for (const k of ['kind', 'shares']) state[k] ||= {};
@@ -112,7 +112,11 @@ async function readMap() {
   const { frames } = await r.json();
   Object.assign(health, decodeHealth(frames));
   const now = Date.now();
-  for (const [n, h] of Object.entries(health)) if (h.max) { const a = (hpHist[n] ||= []); a.push({ t: now, f: h.hp / h.max }); while (a[0].t < now - 60e3) a.shift(); }
+  for (const [n, h] of Object.entries(health)) if (h.max) {
+    const a = (hpHist[n] ||= []);
+    if (a.at(-1)?.f !== h.hp / h.max) fs.appendFileSync('data/hp.jsonl', JSON.stringify({ u: n, t: now, hp: h.hp, max: h.max, out: h.out, alive: h.alive }) + '\n');
+    a.push({ t: now, f: h.hp / h.max }); while (a[0].t < now - 60e3) a.shift();
+  }
   for (const f of frames) {
     if (!f.text) continue;
     const o = JSON.parse(f.text);
@@ -138,6 +142,7 @@ async function readMap() {
     }
   }
   mapLoaded = true;
+  for (const h of me?.holdings || []) { const why = exitWhy(h); if (why) await sellOwn(h, why); } // no wait for the next guard()
 }
 const hpOf = (name) => health[name.toLowerCase()];
 // never buy dead, outside the zone, under HP_MIN or falling; a holding is sold under HP_EXIT or falling (leaving the
@@ -167,7 +172,13 @@ async function buy(s, amt, why, kind) {
   if (t?.s === 200) { state.peak[s.external_id] = s.last_price_cents; state.entryAt[s.external_id] = Date.now(); state.kind[s.external_id] = kind; save(); }
   return t;
 }
+const selling = new Set();
 async function sellOwn(h, why) {
+  if (selling.has(h.external_id)) return;
+  selling.add(h.external_id);
+  try { await sellOnce(h, why); } finally { selling.delete(h.external_id); }
+}
+async function sellOnce(h, why) {
   const id = h.external_id, own = state.shares[id] && BigInt(state.shares[id]) < BigInt(h.shares) ? state.shares[id] : h.shares;
   if ((await trade('stock-market/sell', h, { shares: own }, why))?.s !== 200) return;
   delete state.peak[id]; delete state.entryAt[id]; delete state.kind[id]; state.exitedAt[id] = Date.now();
@@ -210,6 +221,13 @@ function trialOn(prefix) {
 let me = null, authAlerted = false, lastOk = Date.now(), authLostAt = 0, lastBreadth = 0, names = {}, movers = [], ranking = [], basket = [], pumps = [];
 const trimAt = {}; // a trim's /me can lag: no adopt of the shares just sold
 const lastPrice = {}, status = {}, eliminated = {}, lastTradeAt = {}, STARTED = Date.now();
+// why a holding must go whatever its strategy (status, death, HP, elimination), or null
+function exitWhy(h) {
+  const p = h.last_price_cents, id = h.external_id, gone = dead(h.name, state.entryAt[id] ? state.entryAt[id] - 60e3 : Date.now() - 10 * 60e3) || hpOf(h.name)?.alive === false;
+  return status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}` : gone ? `died ${p}`
+    : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
+    : falling(h.name) ? `hpfall ${hpOf(h.name).hp}/${hpOf(h.name).max} -${Math.round(hpFall(hpHist[h.name.toLowerCase()], Date.now()) * 100)}% ${p}` : eliminated[id] ? `eliminated ${p}` : null;
+}
 async function guard() {
   const r = await api('stock-market/me');
   if (r.blocked) return;
@@ -232,10 +250,7 @@ async function guard() {
     for (const h of me.holdings) { const q = await api(`stock-market/stocks/${h.external_id}`); if (q.s === 200) holdings.push({ ...h, last_price_cents: q.j.last_price_cents }); }
   }
   for (const h of holdings) {
-    const p = h.last_price_cents, id = h.external_id, gone = dead(h.name, state.entryAt[id] ? state.entryAt[id] - 60e3 : Date.now() - 10 * 60e3) || hpOf(h.name)?.alive === false;
-    const common = status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}` : gone ? `died ${p}`
-      : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
-      : falling(h.name) ? `hpfall ${hpOf(h.name).hp}/${hpOf(h.name).max} -${Math.round(hpFall(hpHist[h.name.toLowerCase()], Date.now()) * 100)}% ${p}` : eliminated[id] ? `eliminated ${p}` : null;
+    const p = h.last_price_cents, id = h.external_id, common = exitWhy(h);
     if (adopts(h.shares, state.shares[id]) && !(state.exitedAt[id] > Date.now() - 60e3) && !(trimAt[id] > Date.now() - 60e3)) { // a buy by hand joins the pool
       state.shares[id] = String(h.shares); state.kind[id] ||= 'top'; state.entryAt[id] ||= Date.now(); state.peak[id] ||= p;
       log({ ev: 'adopt', name: h.name, shares: state.shares[id] });
@@ -483,7 +498,7 @@ await guard().catch((e) => log({ ev: 'err', fn: 'guard', msg: e.message }));
 // line swallowed record, retune, daily and reloadParams for 8 h (check.mjs now fails on a call hidden that way).
 loop(guard, 2e3);
 loop(scan, 15e3);
-loop(readMap, 2e3);
+loop(readMap, 1e3);
 loop(pushStream, 2e3);
 loop(record, 60e3);
 loop(retune, 2 * 3600e3);

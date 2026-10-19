@@ -19,7 +19,7 @@ protects positions you open by hand, tunes itself, announces its trades in Kick 
 
 ## What the engine does
 
-Positions every 2 s (exits at death or low HP within about 2 s of the map showing it), map (health, deaths) every 2 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
+Positions every 2 s, map (health, deaths) every second, and every map read sells at once what it shows dead or failing (no wait for the next positions check), market every 15 s, one order per scan. The buy reason's first word names the strategy.
 
 | Strategy | Buys | Sells |
 |---|---|---|
@@ -28,11 +28,11 @@ Positions every 2 s (exits at death or low HP within about 2 s of the map showin
 | `crash` | a drop of 25%+ between two scans with no pump in the 3 min before (logged as kind `dip`) | after 10 min |
 
 - **Run mode**: a crash or survivor buy that gains 10% rides a 15% trail from its peak, up to 2 h, instead of its timer.
-- **Every position**, including yours: sold at death (grave, health feed or roster), under 25% HP, after losing 20% of max HP
-  within a minute while under 60% (`hpfall`, added 19/10 evening when dozens of zombies came into the last circle), at
+- **Every position**, including yours: sold at death (grave, health feed or roster), under 25% HP, after losing 15% of max HP
+  within a minute while under 70% (`hpfall`, added 19/10 evening when dozens of zombies came into the last circle), at
   elimination or when the stock stops trading. Never bought under 40% HP, outside the zone, falling that way or dead. A death counts until the
   roster shows the contestant alive again (at least 30 s after it): then it is buyable, and a new death counts again.
-  Revives go to `data/revives.jsonl` and the `revive` event.
+  Revives go to `data/revives.jsonl` and the `revive` event, every health change to `data/hp.jsonl` (the measure for the HP rules).
 - **Your own buys join the pool** (since 2026-10-19): shares bought by hand on the site are taken over as `top` basket
   shares (`adopt` in the log) and follow the basket's exits; a sale by hand just leaves the engine fewer shares.
 - **Guard rails**: rebound and survivor orders capped at 1.5% of the pool reserve; at most 6 non-basket positions; a
