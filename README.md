@@ -19,17 +19,18 @@ protects positions you open by hand, tunes itself, announces its trades in Kick 
 
 ## What the engine does
 
-Positions every 2 s (exits at death or low HP within about 2 s of the map showing it), map (health, deaths) every 3 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
+Positions every 2 s (exits at death or low HP within about 2 s of the map showing it), map (health, deaths) every 2 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
 
 | Strategy | Buys | Sells |
 |---|---|---|
-| `top` | the `topN` highest-priced live contestants (10 by default, 14 since 2026-10-19) (traded in the last 30 min), ranked on their lowest price of now, 2.5 and 5 min ago (`topCalm`: a pump never ranks), 15% of cash each, one buy per scan | rank `topExit` or worse at the hourly check (20, 28 since 2026-10-19) |
+| `top` | the `topN` highest-priced live contestants (10 by default, 14 since 2026-10-19) (traded in the last 30 min), ranked on their lowest price of now, 2.5 and 5 min ago (`topCalm`: a pump never ranks), 15% of cash each, one buy per scan | rank `topExit` or worse at the hourly check (20, 28 since 2026-10-19), ranked among every contestant still standing: outside the zone or untraded is no exit (19/10 evening, two 100/100 HP holdings had been sold for a moment outside the last circle); no buy back within 10 min of any exit |
 | `surv` | 20 s after a new death, the 2 highest-priced live contestants (at most 2 open) | after 30 min |
 | `crash` | a drop of 25%+ between two scans with no pump in the 3 min before (logged as kind `dip`) | after 10 min |
 
 - **Run mode**: a crash or survivor buy that gains 10% rides a 15% trail from its peak, up to 2 h, instead of its timer.
-- **Every position**, including yours: sold at death (grave, health feed or roster), under 25% HP, at elimination or
-  when the stock stops trading. Never bought under 40% HP, outside the zone or dead. A death counts until the
+- **Every position**, including yours: sold at death (grave, health feed or roster), under 25% HP, after losing 20% of max HP
+  within a minute while under 60% (`hpfall`, added 19/10 evening when dozens of zombies came into the last circle), at
+  elimination or when the stock stops trading. Never bought under 40% HP, outside the zone, falling that way or dead. A death counts until the
   roster shows the contestant alive again (at least 30 s after it): then it is buyable, and a new death counts again.
   Revives go to `data/revives.jsonl` and the `revive` event.
 - **Your own buys join the pool** (since 2026-10-19): shares bought by hand on the site are taken over as `top` basket
@@ -353,7 +354,7 @@ log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, fill (smallest position first, cash reserve kept) and trim (biggest position, a quarter at most, from half the reserve back to all of it), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, fill (smallest position first, cash reserve kept) and trim (biggest position, a quarter at most, from half the reserve back to all of it), the HP fall (from the highest point of the last minute), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules
