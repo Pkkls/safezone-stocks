@@ -63,6 +63,19 @@ export function decodeHealth(frames) {
 const col = (k, x) => `\x01${k}${x}\x02`, vis = (x) => x.replace(/\x01.|\x02/g, '');
 export const LAYERS = ['w', 'g', 'r', 'y', 'c'];
 export const START_CASH = 60746; // balance before the first order on 17/10 (45560 after a 15186 buy)
+// Trades the account made outside the engine (the owner on the site) since `since`: { id: cash flow in cents }, a buy
+// negative. They move the balance like a deposit would, so they are taken back out of the deposits.
+export function manualFlows(trades, engineIds, since) {
+  return Object.fromEntries((trades || []).filter((x) => !engineIds.has(x.id) && Date.parse(x.occurred_at) > since)
+    .map((x) => [x.id, x.side === 'buy' ? -x.cash_cents : x.cash_cents]));
+}
+// Basket fill, once every top slot is held: the smallest position gets min(size x cash, its pool cap), never taking
+// cash under keep x total value. pos: [{ id, value, cap }] in cents. Returns { id, amt } or null.
+export function fillPick(pos, cash, total, keep, size) {
+  const p = pos.toSorted((a, b) => a.value - b.value)[0];
+  const amt = p && Math.floor(Math.min(cash * size, p.cap, cash - keep * total));
+  return amt >= 1000 ? { id: p.id, amt } : null;
+}
 // Last known balance in the trade log: an order's balance_after_cents or a cash_in/cash_out balance, whichever is later
 // (19/10: reading orders only made a restart count a deposit twice).
 export function lastBalance(lines) {

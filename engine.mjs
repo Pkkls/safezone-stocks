@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -36,8 +36,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // reserve. Crash: drop between two scans, max rise before, hold. Run mode: start and trail. Survivors and top basket:
 // count, hold or exit rank, rebalance period, size, calm window (entry ranks by the lowest price over it: no pump). survTop/topN 0 = off.
 // topForce: the operator keeps the top basket on; retune and the kill switch no longer touch topN.
+// topKeep: once the basket is full, cash above this share of the total value tops up its smallest position (1 = off).
 const DEFAULTS = { size: 0.25, maxImpact: 0.015, dumpExit: true, crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
-  survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3, topForce: false };
+  survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3, topForce: false, topKeep: 1 };
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
 const MIN_BUY = 1000, MAX_POS = 6, COOLDOWN = 30 * 60e3, CRASH_COOLDOWN = 5 * 60e3, TRIAL = 10, SURV_DELAY = 20e3;
 const RUN_HOLD = 120 * 60e3, MANUAL_TRAIL = 0.85, HP_MIN = 0.4, HP_EXIT = 0.25, R0 = 1e6;
@@ -150,6 +151,7 @@ async function trade(side, h, payload, why) {
   const r = await api(side, body), id = h.external_id;
   log({ ev: side, name: h.name, why, status: r.s, res: r.j });
   if (r.j?.balance_after_cents != null) { lastCash = r.j.balance_after_cents; orderSeq++; }
+  if (r.j?.trade_id) engineIds.add(r.j.trade_id);
   if (r.s === 200 && r.j?.shares) { if (side.endsWith('buy')) state.shares[id] = String(BigInt(state.shares[id] || 0) + BigInt(r.j.shares)); else delete state.shares[id]; }
   if (r.s === 200 && process.env.KICK_BEARER) say(h.name, sayText(side, h.name, r.j?.cash_cents ?? 0, fs.readFileSync(LOG, 'utf8').split('\n')));
   return r;
@@ -210,7 +212,13 @@ async function guard() {
     return;
   }
   let holdings = [];
-  if (r.s === 200) { if (authAlerted) log({ ev: 'auth_ok' }); authAlerted = false; authLostAt = 0; lastOk = Date.now(); me = r.j; holdings = me.holdings; }
+  if (r.s === 200) {
+    if (authAlerted) log({ ev: 'auth_ok' }); authAlerted = false; authLostAt = 0; lastOk = Date.now(); me = r.j; holdings = me.holdings;
+    for (const [id, cents] of Object.entries(manualFlows(me.trades, engineIds, MANUAL_SINCE))) {
+      if (id in (state.manual ||= {})) continue;
+      state.manual[id] = cents; save(); log({ ev: 'manual_trade', id, cents });
+    }
+  }
   else {
     log({ ev: 'me_err', status: r.s });
     if (!me) return;
@@ -244,6 +252,11 @@ async function guard() {
 // value point a minute (data/equity.jsonl). /me has no cash field: cash = balance after the latest order, seeded from the log.
 let lastMarket = null, lastEquity = 0;
 let lastCash = lastBalance(fs.readFileSync(LOG, 'utf8').split('\n'));
+// the engine's own trade ids; any other trade in /me is the owner's, by hand (counted from the start of deposit tracking)
+const engineIds = new Set(fs.readFileSync(LOG, 'utf8').match(/"trade_id":"[^"]+"/g)?.map((x) => x.slice(12, -1)));
+const MANUAL_SINCE = Date.parse('2026-10-18T22:31:45Z');
+// deposits net of the owner's own trades: what came in from outside trading
+const netDeposits = () => (state.deposits || 0) - Object.values(state.manual || {}).reduce((a, c) => a + c, 0);
 function writeLive() {
   const entry = {};
   for (const h of me?.holdings || []) if (state.entryAt[h.external_id]) entry[h.external_id] = entryPx(h);
@@ -285,7 +298,7 @@ function pushStream() {
   const out = { pg: total >= 0 ? `PROFIT ${cx(total)} Cx` : ' ', pr: total < 0 ? `PROFIT ${cx(total)} Cx` : ' ', ps: `realized ${cx(me.realized_pnl_cents)}   open ${cx(me.unrealized_pnl_cents)}` };
   Object.assign(out, { ticker: streamTicker(d), dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c });
   // KPI tiles (labels are in run.sh)
-  const k = (x) => Math.round(x / 100).toLocaleString('en-US'), base = START_CASH + (state.deposits || 0), value = lastCash == null ? null : lastCash + me.portfolio_value_cents;
+  const k = (x) => Math.round(x / 100).toLocaleString('en-US'), base = START_CASH + netDeposits(), value = lastCash == null ? null : lastCash + me.portfolio_value_cents;
   const won = trips.filter((t) => t.pnl > 0).length, left = Math.max(0, END - now), alive = Object.values(health).filter((h) => h.alive).length;
   Object.assign(out, { ka: value == null ? '-' : `${k(value)} Cx`, kb: value == null ? '-' : `${value >= base ? '+' : ''}${Math.round((value / base - 1) * 100)}%`,
     kc: lastCash == null ? '-' : `${k(lastCash)} Cx`, kd: `${k(me.portfolio_value_cents)} Cx`, ke: String(me.holdings.length), kf: `${won}/${trips.length}`,
@@ -358,6 +371,13 @@ async function scan() {
       const c = await cash(), amt = Math.min(Math.floor(c * P.topSize), sizeCap(s.last_price_cents));
       const t = amt >= MIN_BUY && amt <= c && await buy(s, amt, `top #${rank.get(s.external_id) + 1} @${s.last_price_cents}`, 'top');
       if (t?.s === 200) return me.holdings.push({ external_id: s.external_id, name: s.name, shares: t.j.shares, last_price_cents: s.last_price_cents }); // until the next /me
+    } else if (!s && P.topKeep < 1 && lastCash != null && (P.topForce || trialOn('top'))) {
+      // basket full: add to its smallest healthy position, keeping topKeep of the total value in cash
+      const pos = me.holdings.filter((h) => state.kind[h.external_id] === 'top' && rank.get(h.external_id) < P.topN && !risky(h.name))
+        .map((h) => ({ h, id: h.external_id, value: Number(h.shares) / 1e6 * h.last_price_cents, cap: sizeCap(h.last_price_cents) }));
+      const f = fillPick(pos, lastCash, lastCash + me.portfolio_value_cents, P.topKeep, P.topSize), x = f && pos.find((p) => p.id === f.id);
+      const t = x && await buy(x.h, f.amt, `topfill ${Math.round(x.value / 100)} Cx @${x.h.last_price_cents}`, 'top');
+      if (t?.s === 200) return (x.h.shares = String(BigInt(x.h.shares) + BigInt(t.j.shares))); // until the next /me
     }
   }
   if (me.holdings.filter((h) => state.kind[h.external_id] !== 'top').length >= MAX_POS) return;
@@ -437,11 +457,11 @@ log({ ev: 'start', dry: DRY, P });
 await guard().catch((e) => log({ ev: 'err', fn: 'guard', msg: e.message }));
 // map: the site caches it 2 s; stream: near real time. One call per line: on 18/10 a comment in the middle of this
 // line swallowed record, retune, daily and reloadParams for 8 h (check.mjs now fails on a call hidden that way).
-loop(guard, 5e3);
+loop(guard, 2e3);
 loop(scan, 15e3);
 loop(readMap, 3e3);
 loop(pushStream, 2e3);
-loop(record, 3 * 60e3);
+loop(record, 60e3);
 loop(retune, 2 * 3600e3);
 loop(daily, 24 * 3600e3);
 loop(reloadParams, 30e3);

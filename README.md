@@ -19,7 +19,7 @@ protects positions you open by hand, tunes itself, announces its trades in Kick 
 
 ## What the engine does
 
-Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
+Positions every 2 s (exits at death or low HP within about 2 s of the map showing it), map (health, deaths) every 3 s, market every 15 s, one order per scan. The buy reason's first word names the strategy.
 
 | Strategy | Buys | Sells |
 |---|---|---|
@@ -42,6 +42,10 @@ Positions every 5 s, map (health, deaths) every 3 s, market every 15 s, one orde
   of many settings on a small sample overfits: the kill switches are the safety net. `params.json` is hot-reloaded.
   `"topForce": true` there keeps the top basket on: self-tuning and its kill switch no longer change it (set on
   2026-10-19 to put idle cash to work, while the 24 h replay had it at -59 to -166 Cx and the last 12 h at +180 to +270).
+  `"topKeep": 0.1` (set the same day): once every basket slot is held, cash above 10% of the total value goes into the
+  smallest healthy basket position, `topfill` in the log, one order per scan. Measured before: on 19/10 every stock live
+  24 h earlier, dead ones sold 2 min after their death, gained 16% on average (+19% over 12 h, +9% over 6 h), and the
+  survivors' prices rose a median 4.6% in the 30 min after each of the 44 deaths.
 - **Supervisor**: the scheduled task runs a parent process that restarts the engine if it crashes or hangs (no
   successful call for 5 min, or a session lost for 3 min).
 
@@ -171,7 +175,7 @@ down, session lost or PC off) or ffmpeg is down, and one when it is back.
 
 Open http://127.0.0.1:7788 while the engine runs (port `DASH_PORT` in `.env`). The supervisor serves it, so it stays
 up while the engine restarts and cannot stop trading if it fails (`dashboard_err` in the log if it cannot start). It is
-read-only and local (bound to 127.0.0.1), built from local files only: `live.json`, rewritten by the engine every 5 s
+read-only and local (bound to 127.0.0.1), built from local files only: `live.json`, rewritten by the engine every 2 s
 (portfolio, last scan, contestant health and roster, API state), `trades.jsonl`, the tape and `data/equity.jsonl` (one
 total value point a minute). Every change reaches open tabs within 2 s (server-sent events). It works at phone width.
 
@@ -241,7 +245,7 @@ rejected) and the closed round trips.
 ### Market
 
 Breadth over 24 h, trades per minute, active wallets, volume per 10 minutes, top gainers and losers, the largest
-trades of the hour, a heat map of every live stock and the trade feed.
+trades of the hour, a heat map of every live stock and the other players' last 20 trades (this account's own trades left out).
 
 ![Market](docs/screenshots/market.png)
 
@@ -261,9 +265,9 @@ trades of the hour, a heat map of every live stock and the trade feed.
 
 ![Market heat map, hover tooltip](docs/screenshots/heat-map-tooltip.png)
 
-*Trade feed*
+*Other players: last 20 trades*
 
-![Trade feed](docs/screenshots/trade-feed.png)
+![Other players: last 20 trades](docs/screenshots/trade-feed.png)
 
 ### Game
 
@@ -322,8 +326,8 @@ Kick announcements, data file sizes and the event log (filter: orders, tuning, h
 
 ### Notes
 
-Times show in the browser's time zone. The tape arrives in 3-minute batches, so the trade feed lags by up to 3 minutes;
-prices and positions refresh every 5 seconds. A gap of more than 15 minutes in the value curve is drawn as a gap.
+Times show in the browser's time zone. The tape arrives in 1-minute batches, so the trade feed lags by up to a minute;
+prices and positions refresh every 2 seconds. A gap of more than 15 minutes in the value curve is drawn as a gap.
 
 `node dashboard.mjs` runs it on its own, for working on the page; edits to `dashboard.html` reload open tabs by
 themselves. `node scripts/screenshots.mjs` retakes the 33 dashboard screenshots above from the running dashboard
@@ -334,11 +338,11 @@ hides stock ids and the site host, and stops if any of them is still on the page
 
 `node status.mjs` prints deaths, breadth, trades and PnL per strategy from local files. `trades.jsonl` is the event
 log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick_say`, `auth_lost` (log in again),
-`blocked`, `revive`, `pump_skip`, `cash_in` / `cash_out` (the Cx Bucks balance moved without an order, e.g. chat earnings: summed in `state.json` as deposits and left out of the gain since the start), `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
+`blocked`, `revive`, `pump_skip`, `cash_in` / `cash_out` (the Cx Bucks balance moved without an order, e.g. chat earnings: summed in `state.json` as deposits and left out of the gain since the start), `manual_trade` (a trade made by hand on the site: its cash is taken back out of the deposits, so it is neither a deposit nor a withdrawal), `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter and fill (smallest position first, cash reserve kept), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits, chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules

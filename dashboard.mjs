@@ -72,7 +72,7 @@ function readTape() {
       hourTrades.push(r);
     }
   }
-  // the recorder writes per stock in batches every 3 min: order by trade time, not by file order
+  // the recorder writes per stock in batches every minute: order by trade time, not by file order
   feed.sort((a, b) => a.t - b.t); feed.splice(0, Math.max(0, feed.length - 80));
   const cut = Date.now() - HOUR;
   while (hourTrades.length && hourTrades[0].t < cut) hourTrades.shift();
@@ -167,7 +167,8 @@ function build() {
   const files = Object.fromEntries(['trades.jsonl', 'live.json', 'state.json', 'params.json'].concat(fs.existsSync('data') ? fs.readdirSync('data').map((f) => 'data/' + f) : []).map((f) => { try { return [f, fs.statSync(f).size]; } catch { return [f, 0]; } }));
 
   return {
-    now, startCash: START_CASH + (st.deposits || 0), // deposits (cash_in, e.g. "double Cx Bucks") are not gains
+    now, // deposits (cash_in, e.g. "double Cx Bucks") are not gains; the owner's own trades (manual_trade) are not deposits
+    startCash: START_CASH + (st.deposits || 0) - Object.values(st.manual || {}).reduce((a, c) => a + c, 0),
     engine: { status, pid: live.pid, startedAt: live.startedAt, liveAge: age(live.t), lastStart, scanAge: age(live.market?.t), okAge: age(api.lastOk), blockedUntil: api.blockedUntil, backoff: api.backoff, authLostAt: api.authLostAt, hpFeed: live.hpFeed, end: live.end, dry: live.dry, lastReb: live.lastReb,
       restarts: events.filter((e) => /^(start|restart|watchdog)$/.test(e.ev) && e.t > now - DAY).map((e) => ({ t: e.t, ev: e.ev, d: e.d })),
       errors: events.filter((e) => /err|blocked|auth_lost|watchdog/.test(e.ev) && e.t > now - HOUR).length, kick, files },
@@ -180,7 +181,7 @@ function build() {
       up: [...movers].sort((a, b) => b.ch15 - a.ch15).slice(0, 8).map(pick), down: [...movers].sort((a, b) => a.ch15 - b.ch15).slice(0, 8).map(pick),
       heat: stocks.filter((s) => !s.dead && s.st === 'active').sort((a, b) => b.p - a.p).map(pick),
       volume, tpm: lastMin.length / 5, wallets: new Set(hourTrades.map((r) => r.u)).size, cxHour: hourTrades.reduce((a, r) => a + (r.c || 0), 0),
-      feed: feed.slice(-40).reverse().map((r) => ({ t: r.t, name: names[r.e] || r.e.slice(-6), side: r.s, c: r.c, imp: r.pb ? r.pa / r.pb - 1 : 0 })),
+      feed: feed.filter((r) => r.u !== me?.trades?.[0]?.user_id).slice(-20).reverse().map((r) => ({ t: r.t, name: names[r.e] || r.e.slice(-6), side: r.s, c: r.c, imp: r.pb ? r.pa / r.pb - 1 : 0 })),
       whales: [...hourTrades].sort((a, b) => (b.c || 0) - (a.c || 0)).slice(0, 10).map((r) => ({ t: r.t, name: names[r.e] || r.e.slice(-6), side: r.s, c: r.c, imp: r.pb ? r.pa / r.pb - 1 : 0 })),
       counts: { listed: market.length, active: stocks.filter((s) => s.st === 'active' && !s.dead).length, dead: stocks.filter((s) => s.dead).length, settled: settled.length } },
     game: { deaths: deaths.length, lastDeaths: [...deaths, ...revives].sort((a, b) => a.t - b.t).slice(-25).reverse(), revives: revives.length, perHour: Object.entries(perHour).map(([t, n]) => [+t, n]).sort((a, b) => a[0] - b[0]).slice(-36), causes,
