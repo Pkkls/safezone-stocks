@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance, fillPick, manualFlows } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -127,27 +127,27 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     movers: [{ name: 'Up', ret: 0.2 }, { name: 'Down', ret: -0.1 }], ranking: [{ name: 'Top', price: 9000 }, { name: 'Next', price: 5000 }],
     strategies: { top: { n: 3, win: 2, pnl: 1500 } } });
   const Lay = raw.map(layers), plain = raw.map((p) => p.replace(/\x01.|\x02/g, '')), P = plain; // plain: what a viewer reads
-  assert.strictEqual(raw.length, 6);
+  assert.strictEqual(raw.length, 8);
   for (const p of plain) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 94), 'page fits 94 x 22: ' + l[0]); }
   for (const [i, L] of Lay.entries()) for (const k of ['g', 'r', 'y', 'c']) assert.deepStrictEqual(L[k].split('\n').map((x) => x.length), L.w.split('\n').map((x) => x.length), `layer ${k} of page ${i + 1} on the same grid`);
   assert.match(Lay[0].g, /\n {49}\+5\.00 +\+25\.0%/, 'a gain is drawn in green, at its column');
   assert.match(Lay[0].r, /\n {49}-1\.00 +-10\.0%/, 'a loss is drawn in red');
   assert.doesNotMatch(Lay[0].g, /-1\.00/, 'control: a loss is never green');
-  assert.match(plain[5], /6\/6 {2}STATUS[\s\S]*\nx +##-{8} +20 - +\.\.\.\.\.[\s\S]*\nz +#{9}- +90 healing +S\.\.\.L/, 'status: weakest first, hp bar, sigil, shield and live flags');
-  assert.match(Lay[5].y, /\n {40}S/, 'a shield is drawn in yellow');
+  assert.match(plain[7], /8\/8 {2}STATUS[\s\S]*\nx +##-{8} +20 - +\.\.\.\.\.[\s\S]*\nz +#{9}- +90 healing +S\.\.\.L/, 'status: weakest first, hp bar, sigil, shield and live flags');
+  assert.match(Lay[7].y, /\n {40}S/, 'a shield is drawn in yellow');
   // 70 alive: every one is on exactly one STATUS page (34 per page), the healthiest included (18/10: FloridaBoy, 110/110,
   // was cut by the 34-weakest page); the page counter follows
   {
     const many = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`p${String(i).padStart(2, '0')}`, { alive: true, hp: i + 1, max: 110, out: false }]));
     const pg = streamPages({ me, health: { ...many, gone: { alive: false, hp: 0, max: 100 } } }).map((p) => p.replace(/\x01.|\x02/g, ''));
-    assert.strictEqual(pg.length, 8, '5 pages + 3 STATUS pages for 70 alive');
-    assert.match(pg[7], /^8\/8 {2}STATUS 3\/3 \(70 alive\)/, 'status pages numbered');
+    assert.strictEqual(pg.length, 10, '7 pages + 3 STATUS pages for 70 alive');
+    assert.match(pg[9], /^10\/10 {2}STATUS 3\/3 \(70 alive\)/, 'status pages numbered');
     for (const n of Object.keys(many)) assert.strictEqual(pg.slice(5).filter((p) => new RegExp(`\\n${n} `).test(p) || new RegExp(` ${n} `).test(p)).length, 1, `${n} on exactly one status page`);
-    assert.match(pg[7], /p69 +#{6}-{4} +70/, 'the healthiest (70/110) is on the last status page');
+    assert.match(pg[9], /p69 +#{6}-{4} +70/, 'the healthiest (70/110) is on the last status page');
     assert.ok(!pg.slice(5).some((p) => /gone/.test(p)), 'control: a dead contestant is on no status page');
     for (const p of pg) { const l = p.trimEnd().split('\n'); assert.ok(l.length <= 22 && l.every((x) => x.length <= 94), 'status page fits 94 x 22'); }
   }
-  assert.match(plain[0], /^1\/6 {2}PORTFOLIO +next \[ {10}\] +data 03:05:00 UTC\nWhat the bot holds/, 'header: page, next-page bar, data time, then a line for viewers');
+  assert.match(plain[0], /^1\/8 {2}PORTFOLIO +next \[ {10}\] +data 03:05:00 UTC\nWhat the bot holds/, 'header: page, next-page bar, data time, then a line for viewers');
   assert.match(P[0], /\nBig +crash +20\.00 +25\.00 +\+5\.00 +\+25\.0% +- +-\nSmall +yours/, 'highest value first; control: a position the engine did not open is yours');
   assert.match(P[1], /04:29 {2}buy {3}Big[\s\S]*top +3 +2 +\+15\.00/, 'orders and strategy PnL');
   assert.match(P[2], /RISING[^\n]*\nUp +\+20\.0%[^\n]*\n[^\n]*\nFALLING 5 MIN\nDown +-10\.0%/, 'control: a fall is never listed as rising');
@@ -165,8 +165,8 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
     const rp = rv.map((p) => p.replace(/\x01.|\x02/g, '')), rl = rv.map(layers);
     assert.match(rp[4], /DEATHS AND REVIVES[^\n]*\n[^\n]*back +REVIVED[^\n]*\n[^\n]*back +zone/, 'a revive is listed with the deaths, newest first');
     assert.match(rl[4].g, /REVIVED/, 'a revive is drawn in green');
-    assert.match(rp[5], /\nback +[#-]{10} +45 - +\.\.\.\.\.R/, 'status: R flag on a revived contestant');
-    assert.doesNotMatch(plain[5], /^[xz] .*R$/m, 'control: no R flag without a revive');
+    assert.match(rp[7], /\nback +[#-]{10} +45 - +\.\.\.\.\.R/, 'status: R flag on a revived contestant');
+    assert.doesNotMatch(plain[7], /^[xz] .*R$/m, 'control: no R flag without a revive');
   }
   // top basket tracker: rank by calm price, held / next marks, refused pumps with their ratio
   {
@@ -248,5 +248,39 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.strictEqual(-22393 - Object.values(f).reduce((a, c) => a + c, 0), 30000, 'the 19/10 case: 300 Cx deposited, 533.93 Cx bought and 10 Cx sold by hand: net deposits 300 Cx');
   assert.notDeepStrictEqual(manualFlows(tr, new Set(), Date.parse('2026-10-18T22:31:45Z')), f, 'control: without the engine ids its own order counts as manual');
   assert.deepStrictEqual(manualFlows(undefined, new Set(), 0), {});
+}
+{ // shares bought by hand join the engine's pool
+  assert.strictEqual(adopts('2000', '1500'), true, 'more held than the engine bought'); assert.strictEqual(adopts('1500', undefined), true, 'a stock bought only by hand');
+  assert.strictEqual(adopts('1500', '1500'), false); assert.strictEqual(adopts('1000', '1500'), false, 'a sale by hand adopts nothing');
+  assert.notStrictEqual('9' > '10', adopts('9', '10'), 'control: compared as text 9 beats 10');
+}
+{ // OTHER PLAYERS: MONEY FLOW (6) and LAST 20 TRADES (7), within the 94 x 22 grid
+  const now = Date.parse('2026-10-19T16:44:30Z'), me = { holdings: [{ external_id: 'e1', name: 'ChickenAndy', shares: '1' }], trades: [] };
+  const names = { e1: 'ChickenAndy', e2: 'SilentDestroyer' };
+  const others = Array.from({ length: 20 }, (_, i) => ({ e: i % 4 ? 'e1' : 'e2', u: 'u' + (i % 3), t: now - 30e3 - i * 1e3, s: i % 2 ? 's' : 'b', c: i === 0 ? 76929 : 1500 + i, pb: 10000, pa: i % 2 ? 9900 : 10100 }));
+  others.push({ e: 'e2', u: 'old', t: now - 20 * 60e3, s: 's', c: 50000, pb: 20000, pa: 18000 }); // in the hour, not in the last 10 min
+  others.push({ e: 'e1', u: 'older', t: now - 70 * 60e3, s: 'b', c: 99999, pb: 1, pa: 2 }); // over an hour ago
+  const P = streamPages({ me, names, others, now }).map((p) => p.replace(/\x01.|\x02/g, '')), flow = P[5], list = P[6];
+  assert.match(flow, /^6\/8 {2}OTHER PLAYERS: MONEY FLOW/);
+  assert.match(flow, /LAST 10 MIN[^\n]*STOCK, 60 MIN +TRD +BOUGHT +SOLD +NET CX\nTRADES +20 +TRADERS +3 +SilentDestroyer +6 +830 +500 +\+330\n/, '10 min totals; the hour by stock, most traded first');
+  assert.match(flow, /BOUGHT +905\.19 Cx +ChickenAndy\* +15 +76 +151 +-76/, 'buys: 769.29 + 9 small ones; a held stock is starred');
+  assert.match(flow, /NET +\+754\.19 Cx +BUYERS LEAD/);
+  assert.match(flow, /BIGGEST +769\.29 Cx +BUY SilentDestroyer/, 'full name, up to 15 characters');
+  assert.match(flow, /LAST 60 MIN[\s\S]*TRADES +21 +TRADERS +4[\s\S]*NET +\+254\.19 Cx +BUYERS LEAD/, 'the hour adds the 500 Cx sale, not the trade 70 min ago');
+  assert.doesNotMatch(flow, /TRADES +2[23]/, 'control: the trade over an hour old is not counted');
+  assert.match(list, /^7\/8 {2}OTHER PLAYERS: LAST 20 TRADES/);
+  assert.match(list, /\n30s +SilentDestroyer +BUY +769\.29 +\+1\.0% BIG +40s +ChickenAndy\* +BUY +15\.10/, 'trade 1 left, trade 11 right, BIG over 100 Cx');
+  assert.match(list, /\n39s +ChickenAndy\* +SELL +15\.09 +-1\.0% +49s +ChickenAndy\* +SELL/, 'row 10 left, row 20 right');
+  assert.match(list, /BIGGEST TRADES, LAST 60 MIN \(UTC\)\n16:44:00 +30s +SilentDestroyer +BUY +769\.29 Cx +price +100\.00 > +101\.00 +\+1\.0%\n16:24:30 +20m +SilentDestroyer +SELL +500\.00 Cx +price +200\.00 > +180\.00 +-10\.0%/, 'the biggest of the hour, largest first');
+  const late = streamPages({ me, names, others: [{ ...others[1], t: now - 65e3 }], now }).map((p) => p.replace(/\x01.|\x02/g, ''))[6];
+  assert.match(late, /\n1m05 ChickenAndy/, 'age in minutes and seconds under 10 min');
+  for (const p of [flow, list]) { assert.ok(p.split('\n').every((l) => l.length <= 94), 'fits the grid'); assert.ok(p.split('\n').length <= 23, 'at most 22 lines'); }
+  assert.match(streamPages({ me }).map((p) => p.replace(/\x01.|\x02/g, ''))[5], /no trade recorded yet/, 'control: empty feed');
+  // banner: trades of 100 Cx or more in the last hour, newest first, BUY green and SELL red, every layer the same width
+  const B = bigBanner(others, names, now), plain = B.w.split('').map((ch, k) => [B.w, B.g, B.r, B.y, B.c].map((l) => l[k]).find((x) => x !== ' ') || ' ').join('');
+  assert.match(plain, /^16:44  BUY SilentDestroyer 769\.29 Cx \+1\.0% +16:24  SELL SilentDestroyer 500\.00 Cx -10\.0% +\|$/);
+  assert.match(B.g, /BUY/); assert.match(B.r, /SELL/); assert.doesNotMatch(B.g, /SELL/, 'control: a sale is never green');
+  assert.ok(new Set([B.w, B.g, B.r, B.y, B.c].map((l) => l.length)).size === 1 && [B.g, B.r].every((l) => l.endsWith('|')), 'same width, same end mark');
+  assert.match(bigBanner([], names, now).w, /^no trade of 100 Cx or more in the last hour +\|$/);
 }
 console.log('check ok');

@@ -122,7 +122,7 @@ function build() {
     const p = h.last_price_cents, hp = live.health?.[String(h.name).toLowerCase()] || null;
     // /me gives cost basis and current value per holding (cents); pnl is theirs, before the sell fee
     const cost = h.cost_basis_cents, value = h.current_value_cents;
-    return { id, name: h.name, kind, entry, p, cost, value, pnl: value - cost, pct: cost ? value / cost - 1 : null, peak: st.peak?.[id] ?? st.manualPeak?.[id] ?? null, since: st.entryAt?.[id] ?? null, hp };
+    return { id, name: h.name, kind, entry, p, cost, value, pnl: value - cost, pct: cost ? value / cost - 1 : null, peak: st.peak?.[id] ?? null, since: st.entryAt?.[id] ?? null, hp };
   });
   const invested = me?.portfolio_value_cents ?? positions.reduce((a, x) => a + (x.value || 0), 0);
   // /me has no cash field: cash is the balance after the latest order (exact, orders are the only cash moves)

@@ -69,6 +69,8 @@ export function manualFlows(trades, engineIds, since) {
   return Object.fromEntries((trades || []).filter((x) => !engineIds.has(x.id) && Date.parse(x.occurred_at) > since)
     .map((x) => [x.id, x.side === 'buy' ? -x.cash_cents : x.cash_cents]));
 }
+// More shares held than the engine bought: the rest was bought by hand, and the engine takes it over.
+export const adopts = (held, mine) => BigInt(held || 0) > BigInt(mine || 0);
 // Basket fill, once every top slot is held: the smallest position gets min(size x cash, its pool cap), never taking
 // cash under keep x total value. pos: [{ id, value, cap }] in cents. Returns { id, amt } or null.
 export function fillPick(pos, cash, total, keep, size) {
@@ -104,13 +106,13 @@ export const deadAfter = (died = 0, revived = 0, since = 0) => died > since && r
 
 export function streamPages(d) {
   const { me, names = {}, health = {}, roster = {}, revived = {}, breadth = 0, now = Date.now(), kindOf = () => '', deaths = [], movers = [], ranking = [], strategies = {},
-    trips = [], basket = [], pumps = [], entryAt = {} } = d;
+    trips = [], basket = [], pumps = [], entryAt = {}, others = [] } = d;
   const c = (x) => (x / 100).toFixed(2), s = (x) => (x >= 0 ? '+' : '') + c(x), pad = (x, n) => String(x).slice(0, n).padEnd(n);
   const gr = (v, x) => col(v >= 0 ? 'g' : 'r', x), hm = (t) => new Date(t).toISOString().slice(11, 16), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
   const age = (t) => { const m = Math.floor((now - t) / 60e3); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${Math.floor(m / 1440)}d${Math.floor((m % 1440) / 60)}h`; };
   // every alive contestant gets a status line, 34 per page: 18/10 the page kept only the 34 weakest of 67 alive, so a
   // healthy one (FloridaBoy, 110/110) never showed. One STATUS page per 34, weakest first across them.
-  const PER = 34, aliveN = Object.values(health).filter((h) => h.alive).length, statusN = Math.max(1, Math.ceil(aliveN / PER)), N = 5 + statusN;
+  const PER = 34, aliveN = Object.values(health).filter((h) => h.alive).length, statusN = Math.max(1, Math.ceil(aliveN / PER)), N = 7 + statusN;
   const two = (a, b) => Array.from({ length: Math.max(a.length, b.length) }, (_, i) => { const l = a[i] || ''; return (l + ' '.repeat(Math.max(0, 48 - vis(l).length)) + (b[i] || '')).trimEnd(); });
   // header: page k/N and title, a bar that fills until the next page (20 s), data time; then one line for viewers
   const fill = Math.floor((now % 20e3) / 2e3);
@@ -152,18 +154,49 @@ export function streamPages(d) {
     const r = roster[u] || {}, flag = (on, k, ch) => (on ? col(k, ch) : '.');
     return `${pad(u, 13)} ${bar(h)} ${String(h.hp).padStart(3)} ${pad(r.sigil || '-', 10)} ${flag(h.shield, 'y', 'S')}${flag(h.poison, 'r', 'P')}${flag(h.drone, 'r', 'D')}${flag(h.out, 'r', 'O')}${flag(r.live, 'g', 'L')}${flag(revived[u], 'g', 'R')}`;
   });
+  // OTHER PLAYERS, two pages from the tape of everyone else (own trades left out, newest first). MONEY FLOW: totals over
+  // 10 and 60 min and the 15 most traded stocks of the hour. LAST 20 TRADES: two columns of 10, then the 4 biggest of
+  // the hour with their price before and after.
+  const held = new Set(me.holdings.map((h) => h.external_id)), nm = (e) => names[e] || e.slice(-6);
+  const cl = (x) => (x / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), cx = (x) => `${cl(x)} Cx`; // 1,234.56
+  const star = (e) => { const n = nm(e).slice(0, 15), h = held.has(e); return n + (h ? col('c', '*') : '') + ' '.repeat(16 - n.length - h); }; // name, * if held, 16 columns
+  const sideOf = (x) => col(x.s === 'b' ? 'g' : 'r', x.s === 'b' ? 'BUY ' : 'SELL'), moveOf = (x) => gr(x.pa - x.pb, pct(x.pb ? x.pa / x.pb - 1 : 0).padStart(6));
+  const w60 = others.filter((x) => x.t > now - 3600e3), w10 = w60.filter((x) => x.t > now - 10 * 60e3);
+  const totals = (title, win) => {
+    const buy = win.filter((x) => x.s === 'b').reduce((a, x) => a + x.c, 0), sell = win.reduce((a, x) => a + x.c, 0) - buy, net = buy - sell;
+    const big = win.reduce((m, x) => (x.c > (m?.c ?? -1) ? x : m), null);
+    return [col('c', title), `TRADES ${String(win.length).padStart(7)}     TRADERS ${String(new Set(win.map((x) => x.u)).size).padStart(5)}`,
+      `BOUGHT ${col('g', cx(buy).padStart(14))}`, `SOLD   ${col('r', cx(sell).padStart(14))}`,
+      `NET    ${gr(net, `${net >= 0 ? '+' : '-'}${cx(Math.abs(net))}`.padStart(14))}  ${win.length ? gr(net, net >= 0 ? 'BUYERS LEAD' : 'SELLERS LEAD') : ''}`,
+      big ? `BIGGEST ${cx(big.c).padStart(13)}  ${col(big.s === 'b' ? 'g' : 'r', big.s === 'b' ? 'BUY' : 'SELL')} ${nm(big.e).slice(0, 15)}` : 'BIGGEST            -'];
+  };
+  const by = {}; for (const x of w60) { const v = (by[x.e] ||= { n: 0, b: 0, s: 0 }); v.n++; v[x.s === 'b' ? 'b' : 's'] += x.c; }
+  const k0 = (x) => Math.round(x / 100).toLocaleString('en-US'), sk = (x) => (x >= 0 ? '+' : '-') + k0(Math.abs(x));
+  const stockRows = [col('c', `${pad('STOCK, 60 MIN', 16)} TRD   BOUGHT     SOLD  NET CX`), ...Object.entries(by).sort((p, q) => q[1].b + q[1].s - (p[1].b + p[1].s)).slice(0, 15)
+    .map(([e, v]) => `${star(e)} ${String(v.n).padStart(3)} ${col('g', k0(v.b).padStart(8))} ${col('r', k0(v.s).padStart(8))} ${gr(v.b - v.s, sk(v.b - v.s).padStart(7))}`)];
+  if (stockRows.length === 1) stockRows.push('no trade in the last hour');
+  const flowPage = [...two([...totals('LAST 10 MIN', w10), '', ...totals('LAST 60 MIN', w60)], stockRows), '',
+    `${col('c', '*')} the bot holds this stock   TRD = trades   NET = bought minus sold   BIGGEST = largest trade`];
+  const ago = (t) => { const x = Math.max(0, Math.round((now - t) / 1e3)); return x < 60 ? `${x}s` : x < 600 ? `${Math.floor(x / 60)}m${String(x % 60).padStart(2, '0')}` : x < 3600 ? `${Math.floor(x / 60)}m` : `${Math.floor(x / 3600)}h`; };
+  const ot = others.slice(0, 20).map((x) => `${pad(ago(x.t), 4)} ${star(x.e)} ${sideOf(x)} ${cl(x.c).padStart(8)} ${moveOf(x)}${x.c >= 10000 ? ' ' + col('y', 'BIG') : ''}`);
+  const oh = col('c', 'AGO  STOCK             SIDE       CX   MOVE');
+  const top4 = [...w60].sort((p, q) => q.c - p.c).slice(0, 4).map((x) => `${new Date(x.t).toISOString().slice(11, 19)}  ${pad(ago(x.t), 4)}  ${star(x.e)} ${sideOf(x)} ${cx(x.c).padStart(12)}   price ${c(x.pb).padStart(7)} > ${c(x.pa).padStart(7)}  ${moveOf(x)}`);
+  const tradesPage = [...two([oh, ...ot.slice(0, 10)], [oh, ...ot.slice(10)]), '', col('c', 'BIGGEST TRADES, LAST 60 MIN (UTC)'), ...(top4.length ? top4 : ['none']), '',
+    `${col('y', 'BIG')} 100 Cx or more   ${col('c', '*')} the bot holds this stock   MOVE = price change caused by the trade`];
   const head = col('c', 'NAME          HP BAR      HP SIGIL      SPDOLR');
   const legend = col('c', 'S') + ' shield  ' + col('c', 'P') + ' poisoned  ' + col('c', 'D') + ' drone incoming  ' + col('c', 'O') + ' outside the zone  ' + col('c', 'L') + ' live  ' + col('c', 'R') + ' revived';
   const status = Array.from({ length: statusN }, (_, k) => {
     const part = st.slice(k * PER, (k + 1) * PER);
-    return page(6 + k, `STATUS${statusN > 1 ? ` ${k + 1}/${statusN}` : ''} (${aliveN} alive)`, 'Every contestant still in the game, weakest first: HP, class and what is happening to them',
+    return page(8 + k, `STATUS${statusN > 1 ? ` ${k + 1}/${statusN}` : ''} (${aliveN} alive)`, 'Every contestant still in the game, weakest first: HP, class and what is happening to them',
       [...two([head, ...part.slice(0, 17)], [head, ...part.slice(17)]), legend]);
   });
   return [page(1, 'PORTFOLIO', 'What the bot holds right now, biggest first (type = strategy that bought it)', pos),
     page(2, 'ACTIVITY', 'Every order it placed, and what each strategy made once sold', two(orders, strat)),
     page(3, 'MARKET', 'Who moves in the last 5 minutes, and the most expensive stocks', two(market, rank)),
-    page(4, 'TOP BASKET TRACKER', 'The bot holds the 10 priciest live stocks, ranked on a calm price', two(bk, pw)),
-    page(5, 'CONTESTANTS', 'A death knocks the stock about 20% down: the bot sells first', two(danger, dead)), ...status];
+    page(4, 'TOP BASKET TRACKER', 'The bot holds the priciest live stocks, ranked on a calm price', two(bk, pw)),
+    page(5, 'CONTESTANTS', 'A death knocks the stock about 20% down: the bot sells first', two(danger, dead)),
+    page(6, 'OTHER PLAYERS: MONEY FLOW', 'What everyone else bought and sold over 10 and 60 minutes, and in which stocks', others.length ? flowPage : ['no trade recorded yet']),
+    page(7, 'OTHER PLAYERS: LAST 20 TRADES', 'Their latest trades, newest first, and the biggest of the hour (recorded every minute)', others.length ? tradesPage : ['no trade recorded yet']), ...status];
 }
 
 // Right panel of the stream. Total value over `span` as block characters, w columns x h rows (the last value of each
@@ -274,6 +307,15 @@ export function ownOrders(lines) {
 }
 
 // Scrolling ticker line for the stream (same d as streamPages): PnL, top movers, last orders, alive count. ASCII only.
+// Big trades banner, on every page: other players' trades of 100 Cx or more in the last hour, newest first, one
+// scrolling line as color layers (the "|" that layers() puts at the end gives every layer the same width and height).
+export function bigBanner(others = [], names = {}, now = Date.now(), min = 10000) {
+  const c = (x) => (x / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`;
+  const v = others.filter((x) => x.c >= min && x.t > now - 3600e3).slice(0, 12).map((x) => `${new Date(x.t).toISOString().slice(11, 16)}  ${col(x.s === 'b' ? 'g' : 'r', x.s === 'b' ? 'BUY' : 'SELL')} ${String(names[x.e] || x.e.slice(-6)).replace(/[^\x20-\x7e]/g, '')} ${c(x.c)} Cx ${col(x.pa >= x.pb ? 'g' : 'r', pct(x.pb ? x.pa / x.pb - 1 : 0))}`);
+  const text = v.length ? v.join('       ') : 'no trade of 100 Cx or more in the last hour';
+  return layers(text, vis(text).length + 4);
+}
+
 export function streamTicker(d) {
   const { me, names = {}, health = {}, movers = [] } = d;
   const c = (x) => (x / 100).toFixed(2), pct = (r) => `${r >= 0 ? '+' : ''}${(r * 100).toFixed(1)}%`, mv = [...movers].sort((a, b) => b.ret - a.ret);

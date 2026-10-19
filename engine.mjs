@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, DUMP_DROP, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -37,14 +37,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // count, hold or exit rank, rebalance period, size, calm window (entry ranks by the lowest price over it: no pump). survTop/topN 0 = off.
 // topForce: the operator keeps the top basket on; retune and the kill switch no longer touch topN.
 // topKeep: once the basket is full, cash above this share of the total value tops up its smallest position (1 = off).
-const DEFAULTS = { size: 0.25, maxImpact: 0.015, dumpExit: true, crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
+const DEFAULTS = { size: 0.25, maxImpact: 0.015, crashDrop: 0.25, crashFlat: 0.10, dipHold: 10 * 60e3, runStart: 1.10, runTrail: 0.85,
   survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3, topForce: false, topKeep: 1 };
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
 const MIN_BUY = 1000, MAX_POS = 6, COOLDOWN = 30 * 60e3, CRASH_COOLDOWN = 5 * 60e3, TRIAL = 10, SURV_DELAY = 20e3;
-const RUN_HOLD = 120 * 60e3, MANUAL_TRAIL = 0.85, HP_MIN = 0.4, HP_EXIT = 0.25, R0 = 1e6;
+const RUN_HOLD = 120 * 60e3, HP_MIN = 0.4, HP_EXIT = 0.25, R0 = 1e6;
 const sizeCap = (price) => Math.floor(R0 * Math.sqrt(price / 1000) * P.maxImpact); // own impact ~ size / pool reserve
-const state = { peak: {}, exitedAt: {}, entryAt: {}, kind: {}, shares: {}, manualPeak: {}, ...readJson(STATE) };
-for (const k of ['kind', 'shares', 'manualPeak']) state[k] ||= {};
+const state = { peak: {}, exitedAt: {}, entryAt: {}, kind: {}, shares: {}, ...readJson(STATE) };
+for (const k of ['kind', 'shares']) state[k] ||= {};
 const save = () => { try { fs.writeFileSync(STATE + '.tmp', JSON.stringify(state)); fs.renameSync(STATE + '.tmp', STATE); } catch (e) { log({ ev: 'save_err', msg: e.message }); } };
 
 async function notify(text) { // Telegram, only for what needs the operator
@@ -138,10 +138,6 @@ const hpOf = (name) => health[name.toLowerCase()];
 // never buy dead, outside the zone or under HP_MIN; a holding is sold under HP_EXIT (leaving the zone alone is not enough)
 const risky = (name, frac = HP_MIN) => { const h = hpOf(name); return !!h && (!h.alive || (frac === HP_MIN && h.out) || h.hp < h.max * frac); };
 const dead = (name, since = 0) => deadAfter(diedAt[name.toLowerCase()], revivedAt[name.toLowerCase()], since);
-async function dumped(h, since) { // a sell knocking the price down >= DUMP_DROP since `since`
-  const r = await api(`stock-market/stocks/${h.external_id}/trades?page=1&pageSize=20`);
-  return (r.j?.data || []).some((t) => t.side === 'sell' && Date.parse(t.occurred_at) > since && (t.price_before_cents - t.price_after_cents) / t.price_before_cents >= DUMP_DROP);
-}
 
 // Orders. Kick chat announcement when KICK_BEARER is set. The engine tracks its own shares: the operator may hold the same stock.
 const say = (name, msg) => execFile('python', ['kick_say.py', name, msg], { timeout: 30e3 }, (err, out) => log({ ev: 'kick_say', name, out: String(out).trim(), err: err?.message?.slice(0, 120) }));
@@ -228,13 +224,9 @@ async function guard() {
     const p = h.last_price_cents, id = h.external_id, gone = dead(h.name, state.entryAt[id] ? state.entryAt[id] - 60e3 : Date.now() - 10 * 60e3) || hpOf(h.name)?.alive === false;
     const common = status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}` : gone ? `died ${p}`
       : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}` : eliminated[id] ? `eliminated ${p}` : null;
-    if (!state.entryAt[id]) {
-      const pk = state.manualPeak[id] = Math.max(state.manualPeak[id] || 0, p);
-      const why = p < pk * MANUAL_TRAIL ? `manual trail ${p}<${Math.round(pk * MANUAL_TRAIL)}` : common ? `manual ${common}`
-        : P.dumpExit && p <= (lastPrice[id] ?? p) * (1 - DUMP_DROP) && await dumped(h, Date.now() - 60e3) ? `manual dump ${p}` : null;
-      lastPrice[id] = p;
-      if (why && (await trade('stock-market/sell', h, { shares: h.shares }, why))?.s === 200) { delete state.manualPeak[id]; me.holdings = me.holdings.filter((x) => x.external_id !== id); }
-      continue;
+    if (adopts(h.shares, state.shares[id]) && !(state.exitedAt[id] > Date.now() - 60e3)) { // a buy by hand joins the pool
+      state.shares[id] = String(h.shares); state.kind[id] ||= 'top'; state.entryAt[id] ||= Date.now(); state.peak[id] ||= p;
+      log({ ev: 'adopt', name: h.name, shares: state.shares[id] });
     }
     state.peak[id] = Math.max(state.peak[id] || 0, p);
     const kind = state.kind[id], top = kind === 'top', run = !top && state.peak[id] >= entryPx(h) * P.runStart;
@@ -291,12 +283,14 @@ function pushStream() {
   }
   const now = Date.now(), lines = fs.readFileSync(LOG, 'utf8').split('\n'), { orders, trips } = ownOrders(lines);
   const d = { me, names, health, roster, revived: revivedAt, breadth: lastBreadth, startedAt: STARTED, now, kindOf: (id) => state.kind[id] || (state.entryAt[id] ? 'crash' : ''), deaths: recentDeaths, movers, ranking,
-    strategies: roundTrips(lines, ['top', 'crash', 'surv', 'dip']), trips, basket, pumps, entryAt: state.entryAt }, pages = streamPages(d);
+    strategies: roundTrips(lines, ['top', 'crash', 'surv', 'dip']), trips, basket, pumps, entryAt: state.entryAt,
+    others: others.filter((x) => x.u !== me.trades?.[0]?.user_id).reverse() }, pages = streamPages(d);
   const i = Math.floor(now / 20e3) % pages.length, L = layers(pages[i]);
   // profit overlay: total PnL (realized + open) big in the header, green when positive (pg) or red (pr), detail in ps
   const cx = (x) => `${x >= 0 ? '+' : '-'}${(Math.abs(x) / 100).toFixed(2)}`, total = me.realized_pnl_cents + me.unrealized_pnl_cents;
   const out = { pg: total >= 0 ? `PROFIT ${cx(total)} Cx` : ' ', pr: total < 0 ? `PROFIT ${cx(total)} Cx` : ' ', ps: `realized ${cx(me.realized_pnl_cents)}   open ${cx(me.unrealized_pnl_cents)}` };
-  Object.assign(out, { ticker: streamTicker(d), dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c });
+  const B = bigBanner(d.others, names, now);
+  Object.assign(out, { bw: B.w, bg: B.g, br: B.r, ticker: streamTicker(d), dash: L.w, g: L.g, r: L.r, y: L.y, c: L.c });
   // KPI tiles (labels are in run.sh)
   const k = (x) => Math.round(x / 100).toLocaleString('en-US'), base = START_CASH + netDeposits(), value = lastCash == null ? null : lastCash + me.portfolio_value_cents;
   const won = trips.filter((t) => t.pnl > 0).length, left = Math.max(0, END - now), alive = Object.values(health).filter((h) => h.alive).length;
@@ -405,6 +399,8 @@ async function scan() {
 // Tape recorder (feeds the tuning): new public trades of the stocks that traded since their watermark, <= 5 pages each.
 const mark = {};
 for (const r of loadTape(Date.now() - 2 * 86400e3)) mark[r.e] = Math.max(mark[r.e] || 0, r.t);
+// the latest trades of every player, for the stream's OTHER PLAYERS page (own trades filtered out there)
+const others = loadTape(Date.now() - 3600e3); // ~600 to 6,000 rows an hour
 async function record() {
   let added = 0, failed = 0, capped = 0; const out = {};
   for (const id of Object.keys(status)) {
@@ -414,7 +410,7 @@ async function record() {
       const r = await api(`stock-market/stocks/${id}/trades?page=${page}&pageSize=100`);
       if (r.s !== 200) { failed++; break; }
       const rows = (r.j.data || []).map(compact), fresh = rows.filter((x) => x.t > since);
-      for (const x of fresh) { (out[new Date(x.t).toISOString().slice(0, 10)] ||= []).push(JSON.stringify(x)); newest = Math.max(newest, x.t); added++; }
+      for (const x of fresh) { others.push(x); (out[new Date(x.t).toISOString().slice(0, 10)] ||= []).push(JSON.stringify(x)); newest = Math.max(newest, x.t); added++; }
       if (fresh.length < rows.length || page * 100 >= r.j.total) break;
     }
     if (page > 5) capped++;
@@ -422,6 +418,8 @@ async function record() {
   }
   fs.mkdirSync('data', { recursive: true });
   for (const [day, lines] of Object.entries(out)) fs.appendFileSync(`data/tape-${day}.jsonl`, lines.join('\n') + '\n');
+  others.sort((a, b) => a.t - b.t);
+  const cut = others.findIndex((x) => x.t > Date.now() - 3600e3); others.splice(0, cut < 0 ? others.length : cut); // keep the last hour
   log({ ev: 'record', added, failed, capped });
 }
 

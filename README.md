@@ -32,8 +32,8 @@ Positions every 2 s (exits at death or low HP within about 2 s of the map showin
   when the stock stops trading. Never bought under 40% HP, outside the zone or dead. A death counts until the
   roster shows the contestant alive again (at least 30 s after it): then it is buyable, and a new death counts again.
   Revives go to `data/revives.jsonl` and the `revive` event.
-- **Your own positions**: 15% trail from the peak and a dump exit (a single sell of -5% or more), never a timer. When
-  you hold the same stock as the engine, it only sells its own shares.
+- **Your own buys join the pool** (since 2026-10-19): shares bought by hand on the site are taken over as `top` basket
+  shares (`adopt` in the log) and follow the basket's exits; a sale by hand just leaves the engine fewer shares.
 - **Guard rails**: rebound and survivor orders capped at 1.5% of the pool reserve; at most 6 non-basket positions; a
   30 min cooldown (5 min for crash); each strategy switches itself off after 10 round trips with a negative total.
 - **Self-tuning**, at start and every 2 h, on the last 24 h of recorded tape: each strategy's settings are replayed
@@ -114,7 +114,9 @@ setup, 720p capped at 600 kb/s, SSIM 0.9971 vs 0.9885). Measured on a 1 GB VPS: 
   a fun fact every 20 s (38 of them in `FUN_FACTS`, `backtest.mjs`: Ice Poseidon's career, the Cx community, Safe Zone
   rules, this market, the mascot; taken from Wikipedia, iceposeidon.com and KXAN on 18/10) or a line for its mood;
   the bot log (its orders, deaths, revives and refused pumps, newest first).
-- **Bottom**: a scrolling ticker (PnL, 5-min movers, last orders, alive count).
+- **Bottom**: a scrolling band of the other players' big trades on every page (`BIG TRADES`: 100 Cx or more in the
+  last hour, newest first, time, BUY in green or SELL in red, stock, Cx, price move), then a scrolling ticker (PnL,
+  5-min movers, last orders, alive count).
 
 1. Server (ffmpeg + DejaVu fonts): copy `stream/run.sh` to `~/szdash/`, put the ingest URL and stream key in
    `~/szdash/url` (`chmod 600`), run `nohup sh ~/szdash/run.sh >/dev/null 2>&1 &` and add it as a crontab `@reboot`.
@@ -122,14 +124,17 @@ setup, 720p capped at 600 kb/s, SSIM 0.9971 vs 0.9885). Measured on a 1 GB VPS: 
 
 | Page | Shows |
 |---|---|
-| 1 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`, `yours` = opened by hand), cost, value, P/L in Cx and %, the contestant's HP, how long it has been held |
+| 1 PORTFOLIO | every position: strategy (`top`, `dip` = crash rebound, `surv`; a stock bought by hand is adopted as `top`), cost, value, P/L in Cx and %, the contestant's HP, how long it has been held |
 | 2 ACTIVITY | last 14 orders (buy / sell); per strategy: closed round trips, winners, PnL; the 4 best and 4 worst round trips |
 | 3 MARKET | 8 biggest 5-min rises and falls, share of the market rising, the 18 most expensive stocks |
 | 4 TOP BASKET TRACKER | the basket's ranking on calm price (calm, now, 5-min change, HELD or NEXT to buy) and the pumps it refused (price over 1.5x its calm price, `pump_skip` in the log) |
 | 5 CONTESTANTS | contestants in danger (under 35% HP or outside the zone) and the 18 last deaths (with what killed them) and revives, newest first |
-| 6 and on, STATUS | every alive contestant, weakest first, 34 per page: HP bar, HP, sigil, and the S P D O L R flags below |
+| 6 OTHER PLAYERS: MONEY FLOW | everyone else's trades over the last 10 and 60 min (trades, traders, bought, sold, net with BUYERS or SELLERS LEAD, biggest trade) and the hour's 15 most traded stocks (trades, bought, sold, net; `*` when the bot holds it) |
+| 7 OTHER PLAYERS: LAST 20 TRADES | their last 20 trades newest first (age, stock, side, Cx, price move of the trade, BIG from 100 Cx, `*` when the bot holds it), then the 4 biggest trades of the hour with their price before and after |
+| 8 and on, STATUS | every alive contestant, weakest first, 34 per page: HP bar, HP, sigil, and the S P D O L R flags below |
 
-The seven pages on 18/10 around 22:12 UTC, 1920x1080 (48 alive, two STATUS pages, the mascot telling fun facts):
+The eight pages on 19/10 around 17:20 UTC, 1920x1080 (19 alive, one STATUS page). The other players' pages come from the
+tape, recorded every minute, without this account's own trades:
 
 ![Stream page 1, portfolio](docs/screenshots/stream-page-1.png)
 
@@ -141,9 +146,11 @@ The seven pages on 18/10 around 22:12 UTC, 1920x1080 (48 alive, two STATUS pages
 
 ![Stream page 5, contestants](docs/screenshots/stream-page-5.png)
 
-![Stream page 6, status 1/2](docs/screenshots/stream-page-6.png)
+![Stream page 6, other players: money flow](docs/screenshots/stream-page-6.png)
 
-![Stream page 7, status 2/2](docs/screenshots/stream-page-7.png)
+![Stream page 7, other players: last 20 trades](docs/screenshots/stream-page-7.png)
+
+![Stream page 8, status](docs/screenshots/stream-page-8.png)
 
 `ssh <host> sh -s < stream/snap.sh && scp '<host>:/tmp/szsnap/*.png' docs/screenshots/` retakes them: on the server,
 it waits for each page, freezes its text files and has ffmpeg draw one frame with `run.sh`'s own filters, so a
@@ -338,11 +345,11 @@ hides stock ids and the site host, and stops if any of them is still on the page
 
 `node status.mjs` prints deaths, breadth, trades and PnL per strategy from local files. `trades.jsonl` is the event
 log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick_say`, `auth_lost` (log in again),
-`blocked`, `revive`, `pump_skip`, `cash_in` / `cash_out` (the Cx Bucks balance moved without an order, e.g. chat earnings: summed in `state.json` as deposits and left out of the gain since the start), `manual_trade` (a trade made by hand on the site: its cash is taken back out of the deposits, so it is neither a deposit nor a withdrawal), `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
+`blocked`, `revive`, `adopt` (shares bought by hand taken over by the engine), `pump_skip`, `cash_in` / `cash_out` (the Cx Bucks balance moved without an order, e.g. chat earnings: summed in `state.json` as deposits and left out of the gain since the start), `manual_trade` (a trade made by hand on the site: its cash is taken back out of the deposits, so it is neither a deposit nor a withdrawal), `<strategy>_off` / `_on`, `tune_crash|surv|top`, `params_reload`, `stream_err`, `save_err`, `dashboard_err`. Telegram (optional):
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter and fill (smallest position first, cash reserve kept), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits, chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter and fill (smallest position first, cash reserve kept), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules

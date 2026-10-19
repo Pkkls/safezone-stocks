@@ -3,7 +3,7 @@
 # drop. Layout (1920x1080, 8 fps): header (ASCII "CX" banner, title, blinking LIVE, total profit); 8 KPI tiles; the
 # current page on the left (dash.txt and its color layers g/r/y/c.txt, a new page every 20 s); on the right the total
 # value over 24 h, the CX mascot in its cowboy hat dancing on a disco floor with a speech bubble, and the bot log; a
-# scrolling ticker at the bottom. The engine pushes every text (STREAM_SSH in .env); only the banner is static here.
+# scrolling band of the other players' big trades, then a scrolling ticker at the bottom. The engine pushes every text (STREAM_SSH in .env); only the banner is static here.
 # Sharp text: drawn natively at 1080p (18/10 it was 720p, upscaled by every viewer), x264 at constant quality (CRF 18,
 # up to 4 Mb/s) instead of a 600 kb/s cap that smeared every glyph edge. Measured on 12 s of live content: 4x less
 # encoding error (SSIM 0.9971 vs 0.9885), 29% of real time on the 2 cores.
@@ -41,7 +41,7 @@ VF="$VF,drawtext=$R:textfile=dash.txt:fontcolor=0xe6edf3$PAGE,drawtext=$R:textfi
 VF="$VF,drawtext=$R:textfile=r.txt:fontcolor=0xff6b6b$PAGE,drawtext=$R:textfile=y.txt:fontcolor=0xe3b341$PAGE"
 VF="$VF,drawtext=$R:textfile=c.txt:fontcolor=0x39d0ff$PAGE"
 # right panel: 24 h value chart
-VF="$VF,drawbox=x=1314:y=234:w=2:h=759:color=0x30363d:t=fill"
+VF="$VF,drawbox=x=1314:y=234:w=2:h=708:color=0x30363d:t=fill"
 VF="$VF,drawtext=$T:text=TOTAL VALUE  -  LAST 24 H:fontsize=20:fontcolor=0x39d0ff:x=1338:y=243"
 EQ=":fontsize=21:line_spacing=0:x=1338:y=276"
 VF="$VF,drawtext=$R:textfile=eqg.txt:fontcolor=0x3fb950$EQ,drawtext=$R:textfile=eqr.txt:fontcolor=0xff6b6b$EQ"
@@ -66,12 +66,19 @@ VF="$VF,drawtext=$T:text=BOT LOG (UTC):fontsize=20:fontcolor=0x39d0ff:x=1338:y=7
 LOG=":fontsize=20:line_spacing=4:x=1338:y=804"
 VF="$VF,drawtext=$R:textfile=lw.txt:fontcolor=0xe6edf3$LOG,drawtext=$R:textfile=lg.txt:fontcolor=0x3fb950$LOG"
 VF="$VF,drawtext=$R:textfile=lr.txt:fontcolor=0xff6b6b$LOG,drawtext=$R:textfile=ly.txt:fontcolor=0xe3b341$LOG"
+# big trades band, on every page: other players' trades of 100 Cx or more, scrolling (white, BUY green, SELL red
+# layers bw/bg/br.txt, same width), under a fixed label
+VF="$VF,drawbox=x=0:y=952:w=iw:h=50:color=0x10151d:t=fill,drawbox=x=0:y=952:w=iw:h=2:color=0xe3b341@0.5:t=fill"
+BT="fontsize=24:y=965:x='w-mod(t*120\,w+tw)'"
+VF="$VF,drawtext=$R:textfile=bg.txt:fontcolor=0x3fb950:$BT,drawtext=$R:textfile=br.txt:fontcolor=0xff6b6b:$BT,drawtext=$R:textfile=bw.txt:fontcolor=0xe6edf3:$BT"
+VF="$VF,drawbox=x=0:y=954:w=228:h=48:color=0x10151d:t=fill,drawbox=x=226:y=962:w=2:h=30:color=0xe3b341@0.6:t=fill"
+VF="$VF,drawtext=fontfile=$B:expansion=none:text=BIG TRADES:fontsize=24:fontcolor=0xe3b341:x=36:y=965"
 VF="$VF,drawbox=x=0:y=ih-72:w=iw:h=72:color=0x161b22:t=fill"
 VF="$VF,drawtext=$R:textfile=ticker.txt:fontsize=30:fontcolor=0x3fb950:x='w-mod(t*165\,w+tw)':y=h-52"
 while :; do
   if [ -s url ] && [ -s dash.txt ]; then
     [ -s ticker.txt ] || echo "CX STOCK BOT" > ticker.txt
-    for f in g r y c pg pr ps ka kb kc kd ke kf kg kh eqg eqr eqb say lw lg lr ly mga mgb mgc mgd mca mcb mcc mcd mra mrb mrc mrd; do
+    for f in g r y c pg pr ps ka kb kc kd ke kf kg kh eqg eqr eqb say lw lg lr ly mga mgb mgc mgd mca mcb mcc mcd mra mrb mrc mrd bw bg br; do
       [ -s $f.txt ] || echo " " > $f.txt
     done
     # shellcheck disable=SC2086 # ENC is a list of options
