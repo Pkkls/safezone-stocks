@@ -82,8 +82,12 @@ while :; do
       [ -s $f.txt ] || echo " " > $f.txt
     done
     # shellcheck disable=SC2086 # ENC is a list of options
+    # 2026-10-20: what does not move is drawn once a second, the rest 8 times (layers.py,
+    # same pixels, half the filter CPU); any trouble there and the full chain runs as before
+    VF_RUN=$(printf '%s' "$VF" | python3 layers.py 8 2>>err.log) || VF_RUN=
+    [ -n "$VF_RUN" ] || VF_RUN=$VF
     ffmpeg -nostdin -loglevel error -re -f lavfi -i color=c=0x0b0e14:s=$SIZE:r=8 -f lavfi -i anullsrc=r=44100:cl=stereo \
-      -vf "$VF" $ENC -c:a aac -b:a 64k -f flv "$(cat url)" 2>>err.log
+      -vf "$VF_RUN" $ENC -c:a aac -b:a 64k -f flv "$(cat url)" 2>>err.log
   fi
   sleep 10
 done
