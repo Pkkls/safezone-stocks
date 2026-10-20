@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile, fork, spawn } from 'node:child_process';
-import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner, trimPick, hpFall } from './backtest.mjs';
+import { tuneCrash, tuneSurv, tuneTop, loadTape, compact, breadthOf, BREADTH_WINDOW, sayText, decodeHealth, trialTally, stuck, deadAfter, calmPrice, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, START_CASH, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner, trimPick } from './backtest.mjs';
 
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const HOST = process.env.SITE_HOST;
@@ -42,8 +42,10 @@ const DEFAULTS = { size: 0.25, maxImpact: 0.015, crashDrop: 0.25, crashFlat: 0.1
   survTop: 2, survHold: 30 * 60e3, topN: 10, topExit: 20, topReb: 60 * 60e3, topSize: 0.15, topCalm: 5 * 60e3, topForce: false, topKeep: 1 };
 let P = { ...DEFAULTS, ...readJson(PARAMS) }, paramsMtime = fs.existsSync(PARAMS) ? fs.statSync(PARAMS).mtimeMs : 0;
 const MIN_BUY = 1000, MAX_POS = 6, COOLDOWN = 30 * 60e3, CRASH_COOLDOWN = 5 * 60e3, TRIAL = 10, SURV_DELAY = 20e3;
-// HP_FALL: a held stock is also sold once its contestant lost that share of max HP within a minute and is under HP_FALL_UNDER
-const RUN_HOLD = 120 * 60e3, HP_MIN = 0.4, HP_EXIT = 0.25, HP_FALL = 0.15, HP_FALL_UNDER = 0.7, R0 = 1e6;
+// HP_EXIT 0.85, HP_MIN 0.9 (20/10 02:15 UTC, 11 left in a tiny last circle, zombies): from 23:03 to 02:00, every live
+// stock every 2 min, 15 min later: 85%+ HP -0.6% to +1.5%, under 85% -4.5% to -10% (1,129 samples). The gap between the
+// two keeps a contestant healing around 85% from being sold and bought back. Before: 25% and 40%.
+const RUN_HOLD = 120 * 60e3, HP_MIN = 0.9, HP_EXIT = 0.85, R0 = 1e6;
 const sizeCap = (price) => Math.floor(R0 * Math.sqrt(price / 1000) * P.maxImpact); // own impact ~ size / pool reserve
 const state = { peak: {}, exitedAt: {}, entryAt: {}, kind: {}, shares: {}, ...readJson(STATE) };
 for (const k of ['kind', 'shares']) state[k] ||= {};
@@ -105,7 +107,7 @@ const revivedAt = {};
 if (fs.existsSync('data/revives.jsonl')) for (const l of fs.readFileSync('data/revives.jsonl', 'utf8').split('\n')) if (l) { const d = JSON.parse(l); recentDeaths.push(d); revivedAt[d.u] = Math.max(revivedAt[d.u] || 0, d.t); }
 recentDeaths.sort((a, b) => a.t - b.t).splice(0, recentDeaths.length - 20);
 let pendingDeath = 0, mapLoaded = false;
-const hpHist = {}; // name -> the last minute of health fractions, for hpFall
+const lastHp = {}; // name -> hp / max last logged
 async function readMap() {
   const r = await ctx.request.get(MAP, { headers: H });
   if (r.status() !== 200) return log({ ev: 'map_err', status: r.status() });
@@ -113,9 +115,8 @@ async function readMap() {
   Object.assign(health, decodeHealth(frames));
   const now = Date.now();
   for (const [n, h] of Object.entries(health)) if (h.max) {
-    const a = (hpHist[n] ||= []);
-    if (a.at(-1)?.f !== h.hp / h.max) fs.appendFileSync('data/hp.jsonl', JSON.stringify({ u: n, t: now, hp: h.hp, max: h.max, out: h.out, alive: h.alive }) + '\n');
-    a.push({ t: now, f: h.hp / h.max }); while (a[0].t < now - 60e3) a.shift();
+    if (lastHp[n] !== h.hp / h.max) fs.appendFileSync('data/hp.jsonl', JSON.stringify({ u: n, t: now, hp: h.hp, max: h.max, out: h.out, alive: h.alive }) + '\n');
+    lastHp[n] = h.hp / h.max;
   }
   for (const f of frames) {
     if (!f.text) continue;
@@ -145,10 +146,8 @@ async function readMap() {
   for (const h of me?.holdings || []) { const why = exitWhy(h); if (why) await sellOwn(h, why); } // no wait for the next guard()
 }
 const hpOf = (name) => health[name.toLowerCase()];
-// never buy dead, outside the zone, under HP_MIN or falling; a holding is sold under HP_EXIT or falling (leaving the
-// zone alone is not enough)
-const falling = (name) => { const h = hpOf(name); return !!h && h.hp < h.max * HP_FALL_UNDER && hpFall(hpHist[name.toLowerCase()], Date.now()) >= HP_FALL; };
-const risky = (name, frac = HP_MIN) => { const h = hpOf(name); return !!h && (!h.alive || (frac === HP_MIN && (h.out || falling(name))) || h.hp < h.max * frac); };
+// never buy dead, outside the zone or under HP_MIN; a holding is sold under HP_EXIT (leaving the zone alone is not enough)
+const risky = (name, frac = HP_MIN) => { const h = hpOf(name); return !!h && (!h.alive || (frac === HP_MIN && h.out) || h.hp < h.max * frac); };
 const dead = (name, since = 0) => deadAfter(diedAt[name.toLowerCase()], revivedAt[name.toLowerCase()], since);
 
 // Orders. Kick chat announcement when KICK_BEARER is set. The engine tracks its own shares: the operator may hold the same stock.
@@ -225,8 +224,7 @@ const lastPrice = {}, status = {}, eliminated = {}, lastTradeAt = {}, STARTED = 
 function exitWhy(h) {
   const p = h.last_price_cents, id = h.external_id, gone = dead(h.name, state.entryAt[id] ? state.entryAt[id] - 60e3 : Date.now() - 10 * 60e3) || hpOf(h.name)?.alive === false;
   return status[id] && status[id] !== 'active' && status[id] !== 'paused' ? `status ${status[id]}` : gone ? `died ${p}`
-    : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}`
-    : falling(h.name) ? `hpfall ${hpOf(h.name).hp}/${hpOf(h.name).max} -${Math.round(hpFall(hpHist[h.name.toLowerCase()], Date.now()) * 100)}% ${p}` : eliminated[id] ? `eliminated ${p}` : null;
+    : risky(h.name, HP_EXIT) ? `hp ${hpOf(h.name).hp}/${hpOf(h.name).max} ${p}` : eliminated[id] ? `eliminated ${p}` : null;
 }
 async function guard() {
   const r = await api('stock-market/me');

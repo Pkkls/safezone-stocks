@@ -1,7 +1,7 @@
 // Self-check of the pure helpers (backtest.mjs, import-cookies.mjs): node check.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner, trimPick, hpFall } from './backtest.mjs';
+import { prepare, compact, sayText, decodeHealth, simulateCrash, tuneCrash, simulateSurv, tuneSurv, trialTally, stuck, simulateTop, tuneTop, calmPrice, deadAfter, streamPages, streamTicker, layers, roundTrips, equityChart, moodOf, mascot, bubble, botLog, ownOrders, FUN_FACTS, funFact, lastBalance, fillPick, manualFlows, adopts, bigBanner, trimPick } from './backtest.mjs';
 import { sortCookies, setEnv } from './import-cookies.mjs';
 
 assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:00:00.000Z', price_before_cents: 1, price_after_cents: 2, user_id: 'u1', side: 'buy', cash_cents: 500 }), { e: 'x', t: Date.parse('2026-10-17T20:00:00.000Z'), pb: 1, pa: 2, u: 'u1', s: 'b', c: 500 });
@@ -294,13 +294,5 @@ assert.deepStrictEqual(compact({ external_id: 'x', occurred_at: '2026-10-17T20:0
   assert.strictEqual(trimPick(pos, 36000, 240000, 0.3), null, 'control: exactly 15% cash sells nothing');
   assert.deepStrictEqual(trimPick(pos, 43500, 250000, 0.3, true), { id: 'knut', amt: 15000 }, 'a running trim goes on above 15%');
   assert.strictEqual(trimPick(pos, 75000, 250000, 0.3, true), null, 'and stops at 30%');
-}
-{ // hp fall: share of max HP lost from the highest point of the last minute
-  const t0 = 1e6, h = [{ t: t0, f: 0.9 }, { t: t0 + 20e3, f: 0.75 }, { t: t0 + 40e3, f: 0.55 }];
-  assert.ok(Math.abs(hpFall(h, t0 + 40e3) - 0.35) < 1e-9, 'zombies: 90% to 55% in 40 s');
-  assert.ok(Math.abs(hpFall(h, t0 + 70e3) - 0.2) < 1e-9, 'the 90% point left the minute: from 75%');
-  assert.strictEqual(hpFall([...h, { t: t0 + 50e3, f: 0.9 }], t0 + 50e3), 0, 'healed back to the top');
-  assert.strictEqual(hpFall([], t0), 0);
-  assert.ok(Math.abs(hpFall([{ t: t0, f: 0.7 }, { t: t0 + 9e3, f: 0.9 }, { t: t0 + 18e3, f: 0.6 }], t0 + 18e3) - 0.3) < 1e-9, 'from the highest point, not the first');
 }
 console.log('check ok');

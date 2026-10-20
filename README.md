@@ -28,9 +28,12 @@ Positions every 2 s, map (health, deaths) every second, and every map read sells
 | `crash` | a drop of 25%+ between two scans with no pump in the 3 min before (logged as kind `dip`) | after 10 min |
 
 - **Run mode**: a crash or survivor buy that gains 10% rides a 15% trail from its peak, up to 2 h, instead of its timer.
-- **Every position**, including yours: sold at death (grave, health feed or roster), under 25% HP, after losing 15% of max HP
-  within a minute while under 70% (`hpfall`, added 19/10 evening when dozens of zombies came into the last circle), at
-  elimination or when the stock stops trading. Never bought under 40% HP, outside the zone, falling that way or dead. A death counts until the
+- **Every position**, including yours: sold at death (grave, health feed or roster), under 85% HP, at elimination or when the
+  stock stops trading. Never bought under 90% HP, outside the zone or dead. Set on 20/10 at 02:15 UTC with 11 left in a
+  tiny last circle full of zombies (before: sold under 25%, bought from 40%): from 23:03 to 02:00 UTC, every live stock
+  every 2 min, its price 15 min later moved -0.6% to +1.5% at 85% HP or more and -4.5% to -10% under it (1,129 samples,
+  `data/hp.jsonl`); the buys of that night at 85%+ HP were +44 Cx 15 min later, those under it -73 Cx. The gap between
+  85 and 90 keeps a contestant healing around 85% from being sold and bought back. A death counts until the
   roster shows the contestant alive again (at least 30 s after it): then it is buyable, and a new death counts again.
   Revives go to `data/revives.jsonl` and the `revive` event, every health change to `data/hp.jsonl` (the measure for the HP rules).
 - **Your own buys join the pool** (since 2026-10-19): shares bought by hand on the site are taken over as `top` basket
@@ -354,7 +357,7 @@ log: `start`, `restart`, `watchdog`, `stock-market/buy|sell` (with `why`), `kick
 lost session, long API block, strategy switched off or on, new params, daily PnL.
 
 `node check.mjs` must print `check ok` after any change: replays, tuners, kill-switch tally, watchdog, health
-decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, fill (smallest position first, cash reserve kept) and trim (biggest position, a quarter at most, from half the reserve back to all of it), the HP fall (from the highest point of the last minute), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
+decoder, revives (dead until revived, dead again after a new death), the top basket's pump filter, fill (smallest position first, cash reserve kept) and trim (biggest position, a quarter at most, from half the reserve back to all of it), the balance a restart starts from (a deposit never counted twice), trades made by hand kept out of the deposits and their shares adopted, the two OTHER PLAYERS pages (10 and 60 min windows, by-stock totals, two columns of trades, the hour's biggest, BIG and held marks) and the big trades band (BUY green, SELL red, every color layer the same width), chat and stream text (every alive contestant on a STATUS page; basket tracker, value chart, mascot mood, speech bubble, every fun fact shown whole, bot log), cookie sorter, engine loop scheduling (no
 periodic job hidden behind a comment), each with a control case that must fail.
 
 ## Safety rules

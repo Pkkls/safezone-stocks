@@ -71,9 +71,6 @@ export function manualFlows(trades, engineIds, since) {
 }
 // More shares held than the engine bought: the rest was bought by hand, and the engine takes it over.
 export const adopts = (held, mine) => BigInt(held || 0) > BigInt(mine || 0);
-// HP lost from the highest point of the last `win` ms, as a share of max (hist: [{t, f}], f = hp / max, oldest first).
-// 19/10 evening, zombies in the last circle: a fast fall sells before the 25% floor is reached.
-export const hpFall = (hist = [], now, win = 60e3) => { const w = hist.filter((x) => x.t >= now - win); return w.length ? Math.max(...w.map((x) => x.f)) - w.at(-1).f : 0; };
 // Basket trim: from cash under half of keep x total (or `on`, a trim already running) until it is back at keep x total,
 // the biggest position sells up to a quarter of itself. pos: [{ id, value }] in cents. Returns { id, amt } or null.
 export function trimPick(pos, cash, total, keep, on = false) {
